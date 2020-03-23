@@ -1,31 +1,32 @@
 #include <Wire.h>
 #include <LiquidCrystal.h>
 
-#define NO_UPDATE 0
-#define UPDATE_STATE 1
-#define ALERT_MAX_PRESSURE 2
+#define NO_UPDATE           0
+#define UPDATE_STATE        1
+#define ALERT_MAX_PRESSURE  2
+#define ALERT_POWER_SUPPLY  3
 
-#define PARAM_FRESPI 0
-#define PARAM_VTIDAL 1
-#define PARAM_PMAX   2
-#define PARAM_IERATE 3
+#define PARAM_FRESPI        0
+#define PARAM_VTIDAL        1
+#define PARAM_PMAX          2
+#define PARAM_IERATE        3
 
-#define FRESPI_MIN 0
-#define FRESPI_MAX 40
+#define FRESPI_MIN          0
+#define FRESPI_MAX          40
 
-#define VTIDAL_MIN 0
-#define VTIDAL_MAX 1500
+#define VTIDAL_MIN          0
+#define VTIDAL_MAX          1500
 
-#define PMAX_MIN 20
-#define PMAX_MAX 60
+#define PMAX_MIN            20
+#define PMAX_MAX            60
 
-#define IERATE1TO3  0 
-#define IERATE1TO2  1
-#define IERATE1TO15 2
-#define IERATE1TO1  3
-#define IERATE2TO1  4
+#define IERATE1TO3          0 
+#define IERATE1TO2          1
+#define IERATE1TO15         2
+#define IERATE1TO1          3
+#define IERATE2TO1          4
 
-#define INTER_BUTTON_DELAY 100
+#define INTER_BUTTON_DELAY  100
 
 LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 
@@ -34,6 +35,7 @@ int rightPin = 3;
 int upPin = 4;
 int downPin = 5;
 int alarmPin = 7;
+int powerSensePin = 6;
 
 int dIF = 100;  //enter every 100ms
 int dMot = 10;
@@ -56,6 +58,8 @@ int  vTidal = 500;
 byte inExpRate = 1;
 
 int sPressure;
+int sLowPower;
+
 
 /* On screen : 
 Line 1 : 
@@ -116,6 +120,10 @@ void loop()
     // Pressure sensor value in int sPressure
     // to set alert PMAX : 
     // screenType = ALERT_MAX_PRESSURE;
+    if (digitalRead(powerSensePin)==LOW) {
+      screenType = ALERT_POWER_SUPPLY;
+      // TODO : Deactivate motors
+    }
   } 
   if(tInButton+dButton+dInterButton<currTime){
     tInButton = millis();
@@ -136,7 +144,8 @@ void loop()
       // update screen : either values or reset alarm
       screenType = UPDATE_STATE;
       // reset alarm on any push of a button
-      noTone(alarmPin);
+      //noTone(alarmPin);
+      digitalWrite(alarmPin,LOW);
       // if a button was pressed, next one must wait 
       dInterButton = INTER_BUTTON_DELAY;
     } else {
@@ -217,19 +226,24 @@ void set_interface(){
 }
 
 void set_alert() {
-  lcd.setCursor(5, 0);
-  lcd.print("ALERTE");
+  lcd.setCursor(0, 0);
+  lcd.print("ALERTE : Erreur");
+  lcd.setCursor(0, 1);
   switch (screenType){
    case ALERT_MAX_PRESSURE:
-    lcd.setCursor(0, 1);
     lcd.print("P Max Depasse");
+    break;
+    case ALERT_POWER_SUPPLY:
+    lcd.print("Alimentation");
     break;
    default :
     lcd.setCursor(0, 1);
     lcd.print("Erreur inconnue");
     break;
   }
-  tone(alarmPin,1000);
+  //tone(alarmPin,1000);
+  digitalWrite(alarmPin,HIGH);
+  
   /*
   for (int i=0; i<5;i++){
     lcd.setCursor(5, 0);
