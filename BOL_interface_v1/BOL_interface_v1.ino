@@ -35,7 +35,6 @@
 
 #define INTER_BUTTON_DELAY      100
 #define INTER_STARTSTOP_DELAY   1000
-#define RETURN_SENSE_DELAY      1000
 
 
 #define leftPin          2
@@ -62,10 +61,10 @@
 
 LiquidCrystal lcd(pin_RS, pin_EN, pin_D4, pin_D3, pin_D2, pin_D1);
 
-unsigned int dIF = 100;  //enter every 100ms
-unsigned int dMot = 10;
-unsigned int dSense = 10; 
-unsigned int dButton = 40;
+unsigned int dIF =          100000;  //enter every 100ms
+unsigned int dMot =         10000;
+unsigned int dSense =       10000; 
+unsigned int dButton =      40000;
 unsigned int dInterButton = 0;
 
 unsigned long tInIF;
@@ -131,19 +130,19 @@ void setup()
   lcd.clear();
   lcd.setCursor(0, 0);
 
-  tInIF = millis();
-  tInMot = millis();
-  tInSense = millis(); 
-  tInButton = millis();
+  tInIF = micros();
+  tInMot = micros();
+  tInSense = micros(); 
+  tInButton = micros();
   set_interface();
 }
 
 
 void loop()
 {
-  currTime = millis();
-  if(tInIF+dIF<currTime){
-    tInIF = millis();
+  currTime = micros();
+  if(tInIF+dIF<currTime){ // && tInIF+dIF > tInIF ? overflowcheck
+    tInIF = micros();
     // Set interface
     if (screenType == UPDATE_STATE){
       set_interface();
@@ -158,12 +157,12 @@ void loop()
     screenType = UPDATE_PRESSURE;
   }
   if(tInMot+dMot<currTime){
-    tInMot = millis();
+    tInMot = micros();
     // Set motors
     // motorOn = 1 / 0 defines if motors are actve / not active
   }
   if(tInSense+dSense<currTime){
-    tInSense = millis();
+    tInSense = micros();
     // Read sensors
     // Pressure sensor value in int sPressure
     // to set alert PMAX : 
@@ -179,7 +178,7 @@ void loop()
     }
   } 
   if(tInButton+dButton+dInterButton<currTime){
-    tInButton = millis();
+    tInButton = micros();
     
     // Read buttons, update state
     byte leftVal = digitalRead(leftPin);
@@ -205,53 +204,48 @@ void loop()
 
     if (leftVal==LOW || rightVal==LOW || upVal==LOW || downVal==LOW || vTidalDownVal==LOW || vTidalUpVal==LOW || freqRespiDownVal==LOW || freqRespiUpVal == LOW || startStopVal == LOW){
       // record time of last push
-      tLastButton=millis();
-      if (screenType>UPDATE_STATE){
+      tLastButton=micros();
+      if (screenType>UPDATE_PRESSURE){
         // An alarm was triggered -> Don't record button pushes until error is present
         // i.e. : push any button once for reset, if error gone, return to normal, if not, button had no effect
         // reset alarm on any push of a button
         digitalWrite(alarmPin,LOW);  
         //noTone(alarmPin);
         screenType = UPDATE_STATE; // acts as reset alarm
-        break;
+      } else {
+        // update screen : either values or reset alarm
+        screenType = UPDATE_STATE;
+        // if a button was pressed, next one must wait 
+        dInterButton = INTER_BUTTON_DELAY;
+        if (startStopVal == LOW){
+          startStopState = 1-startStopState;
+          dInterButton = INTER_STARTSTOP_DELAY;
+        }
+        // Next 2 params have dedicated buttons 
+        if (freqRespiUpVal==LOW) {
+          fRespi = (fRespi>=FRESPI_MAX) ? FRESPI_MAX : fRespi+FRESPI_STEP;   
+        } else if (freqRespiDownVal==LOW) {
+          fRespi = (fRespi<=FRESPI_MIN) ? FRESPI_MIN : fRespi-FRESPI_STEP;
+        }
+        if (vTidalUpVal==LOW) {
+          vTidal = (vTidal>=VTIDAL_MAX) ? VTIDAL_MAX : vTidal+VTIDAL_STEP;
+        } else if (vTidalDownVal==LOW) {
+          vTidal = (vTidal<=VTIDAL_MIN) ? VTIDAL_MIN : vTidal-VTIDAL_STEP;
+        }
+        if ((currParam == PARAM_PMAX) && upVal==LOW) {
+          pMaxVal = (pMaxVal>=PMAX_MAX) ? PMAX_MAX : pMaxVal+PMAX_STEP;
+        } else if ((currParam == PARAM_PMAX) && downVal==LOW) {
+          pMaxVal = (pMaxVal<=PMAX_MIN) ? PMAX_MIN : pMaxVal-PMAX_STEP;
+        }
+        if ((currParam == PARAM_IERATE) && upVal==LOW) {
+          inExpRate = (inExpRate==IERATE_2TO1) ? IERATE_2TO1 : inExpRate+1;
+        } else if ((currParam == PARAM_IERATE) && downVal==LOW) {
+          inExpRate = (inExpRate==IERATE_1TO3) ? IERATE_1TO3 : inExpRate-1;
+        }
       }
-      // update screen : either values or reset alarm
-      screenType = UPDATE_STATE;
-      // if a button was pressed, next one must wait 
-      dInterButton = INTER_BUTTON_DELAY;
     } else {
       // no button was pressed, reset inter button additional delay
       dInterButton = 0;
-    }
-    if (startStopVal == LOW){
-      startStopState = 1-startStopState;
-      dInterButton = INTER_STARTSTOP_DELAY;
-    }
-    
-    
-    // Next 2 params have dedicated buttons 
-    if (freqRespiUpVal==LOW) {
-      fRespi = (fRespi>=FRESPI_MAX) ? FRESPI_MAX : fRespi+FRESPI_STEP;   
-    } else if (freqRespiDownVal==LOW) {
-      fRespi = (fRespi<FRESPI_MIN) ? FRESPI_MIN : fRespi-FRESPI_STEP;
-    }
-
-    if (vTidalUpVal==LOW) {
-      vTidal = (vTidal>=VTIDAL_MAX) ? VTIDAL_MAX : vTidal+VTIDAL_STEP;
-    } else if (vTidalDownVal==LOW) {
-      vTidal = (vTidal<=VTIDAL_MIN) ? VTIDAL_MIN : vTidal-VTIDAL_STEP;
-    }
-    
-    if ((currParam == PARAM_PMAX) && upVal==LOW) {
-      pMaxVal = (pMaxVal>=PMAX_MAX) ? PMAX_MAX : pMaxVal+PMAX_STEP;
-    } else if ((currParam == PARAM_PMAX) && downVal==LOW) {
-      pMaxVal = (pMaxVal<=PMAX_MIN) ? PMAX_MIN : pMaxVal-PMAX_STEP;
-    }
-
-    if ((currParam == PARAM_IERATE) && upVal==LOW) {
-      inExpRate = (inExpRate==IERATE_2TO1) ? IERATE_2TO1 : inExpRate+1;
-    } else if ((currParam == PARAM_IERATE) && downVal==LOW) {
-      inExpRate = (inExpRate==IERATE_1TO3) ? IERATE_1TO3 : inExpRate-1;
     }
   }  
 }
