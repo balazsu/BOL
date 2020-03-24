@@ -34,7 +34,7 @@
 #define IERATE_DEFAULT       IERATE_1TO15
 
 #define INTER_BUTTON_DELAY      100
-#define INTER_STARTSTOP_DELAY   1000
+#define INTER_STARTSTOP_DELAY   500
 
 
 #define leftPin          2
@@ -82,7 +82,8 @@ byte pMaxVal = PMAX_DEFAULT;
 byte fRespi = FRESPI_DEFAULT;
 int  vTidal = VTIDAL_DEFAULT;
 byte inExpRate = IERATE_DEFAULT;
-byte startStopState = 0;
+byte dummyVariable; // Must exist. Don't know why...
+byte startStopState;
 
 int sPressure = 0;
 int sPressureMax = 0;
@@ -109,6 +110,9 @@ int sLowPower = 1;
 
 void setup()
 {
+  startStopState = 0;
+  dummyVariable = 0;
+  
   pinMode(alarmPin,OUTPUT);
   pinMode(leftPin,INPUT_PULLUP);
   pinMode(rightPin,INPUT_PULLUP);
@@ -120,6 +124,7 @@ void setup()
   pinMode(freqRespiUpPin,INPUT_PULLUP);
   
   pinMode(startStopPin,INPUT_PULLUP);
+  pinMode(powerSensePin,INPUT_PULLUP);
 
   lcd.begin(16, 2);
   lcd.setCursor(0,0);
@@ -146,15 +151,16 @@ void loop()
     // Set interface
     if (screenType == UPDATE_STATE){
       set_interface();
-      set_pressure();  
+      set_pressure();
+      // Until new state, update only pressure from now
+      screenType = UPDATE_PRESSURE;  
     } else if (screenType == UPDATE_PRESSURE){
       set_pressure();
     } else if (screenType != NO_UPDATE){
       set_alert();
       set_pressure();
     }
-    // Until new state, update only pressure from now
-    screenType = UPDATE_PRESSURE;
+    
   }
   if(tInMot+dMot<currTime){
     tInMot = micros();
@@ -193,19 +199,10 @@ void loop()
     
     byte startStopVal = digitalRead(startStopPin);
     
-    
-    if(leftVal==LOW){
-      //currParam = (currParam-1)&0x1;
-      currParam = 1-currParam;
-    } else if(rightVal==LOW){
-      //currParam = (currParam+1)&0x1;
-      currParam = 1-currParam;
-    }
-
     if (leftVal==LOW || rightVal==LOW || upVal==LOW || downVal==LOW || vTidalDownVal==LOW || vTidalUpVal==LOW || freqRespiDownVal==LOW || freqRespiUpVal == LOW || startStopVal == LOW){
       // record time of last push
       tLastButton=micros();
-      if (screenType>UPDATE_PRESSURE){
+      if (screenType>=ALERT_MAX_PRESSURE){
         // An alarm was triggered -> Don't record button pushes until error is present
         // i.e. : push any button once for reset, if error gone, return to normal, if not, button had no effect
         // reset alarm on any push of a button
@@ -220,6 +217,13 @@ void loop()
         if (startStopVal == LOW){
           startStopState = 1-startStopState;
           dInterButton = INTER_STARTSTOP_DELAY;
+        }
+        if(leftVal==LOW){
+          //currParam = (currParam-1)&0x1;
+          currParam = 1-currParam;
+        } else if(rightVal==LOW){
+          //currParam = (currParam+1)&0x1;
+          currParam = 1-currParam;
         }
         // Next 2 params have dedicated buttons 
         if (freqRespiUpVal==LOW) {
@@ -298,36 +302,6 @@ void set_interface(){
   }
 }
 
-
-void set_interface_b(){
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print(fRespi);
-  lcd.setCursor(3,0);
-  lcd.print(vTidal);
-  lcd.setCursor(8,0);
-  lcd.print(pMaxVal);
-  lcd.setCursor(11,0);
-  
-  // Second line
-  lcd.setCursor(0,1);
-  switch (currParam) {
-      case 0:
-        lcd.print("Freq Respiration");
-      break;
-      case 1:
-        lcd.print("  Volume Tidal  ");
-      break;
-      case 2:
-        lcd.print("  Pression Max  ");
-      break;
-      case 3:
-        lcd.print("  Rapport I:E   ");
-      break;
-  }
-  screenType = NO_UPDATE;
-}
-
 void set_alert() {
   lcd.setCursor(9, 0);
   switch (screenType){
@@ -343,18 +317,4 @@ void set_alert() {
   }
   //tone(alarmPin,1000);
   digitalWrite(alarmPin,HIGH);
-  
-  /*
-  for (int i=0; i<5;i++){
-    lcd.setCursor(5, 0);
-    lcd.print("      ");
-    //digitalWrite(buzzerPin,HIGH);
-    tone(buzzerPin,1000);
-    delay(500);
-    noTone(buzzerPin);
-    lcd.setCursor(5, 0);
-    lcd.print("ALERTE");
-    //digitalWrite(buzzerPin,LOW);
-    delay(500);
-  }*/
-}
+  }
