@@ -1,22 +1,23 @@
 #define PIN_EN 5
 #define PIN_DIR 6
 #define PIN_STEP 7
-#define PIN_START 8
+#define PIN_START 2
+#define PIN_PAUSE 3
 
 // TO DO: check correct directions for inspiration/expirations phases
 #define INSP_DIR HIGH
 #define EXP_DIR LOW
 
-enum Motor {INIT, INSP_HIGH, INSP_LOW, EXP_HIGH, EXP_LOW, WAIT};
+enum Motor {INIT, INSP_HIGH, INSP_LOW, EXP_HIGH, EXP_LOW, WAIT, PAUSE};
 
 // Breath parameters
-const unsigned long TCT = 2.0 * 1000000;    // Total cycle time [µs]
-const unsigned long Ti = 1.5 * 1000000;     // Inspiration time [µs]
+const unsigned long TCT = 2 * 1000000;    // Total cycle time [µs]
+const unsigned long Ti = 1.0 * 1000000;     // Inspiration time [µs]
 const unsigned long Te = TCT - Ti;          // Expiration time [µs]
 
 // Motor parameters
 const int m_steps = 16;                     // µsteps per step
-const int n_steps = 400;                    // total motor steps
+const int n_steps = 600;                    // total motor steps
 const int tot_pulses = n_steps * m_steps;   // total µsteps/pulses needed
 
 // Pulse periods
@@ -28,12 +29,32 @@ void update_motor_state(unsigned long curr_time) {
   static unsigned long start_half_pulse;  // last time pulse state changed
   static int rem_pulses;                  // remaining pulses to do
   
+  static uint8_t paused_motor_state;      // motor state that was paused
+  static unsigned long start_pause;       // time of the pause starting
+  
   switch (motor_state) {
     case INIT:
-      if (digitalRead(PIN_START) == HIGH) {
+      // Check for pause
+      if(digitalRead(PIN_PAUSE) == LOW){
+        while(digitalRead(PIN_PAUSE) == LOW){
+          //
+        }
+
+        // Update state for the pause
+        paused_motor_state = motor_state;
+        start_pause = curr_time;
+        motor_state = PAUSE;
+
+        // Disable the motor
         digitalWrite(PIN_EN, HIGH);
+        
+      } else if (digitalRead(PIN_START) == LOW) {
+        while(digitalRead(PIN_START) == LOW){
+          //
+        }
+        digitalWrite(PIN_EN, LOW);
         digitalWrite(PIN_DIR, INSP_DIR); 
-        digitalWrite(PIN_STEP, HIGH);
+        digitalWrite(PIN_STEP, LOW);
         
         motor_state = INSP_HIGH;
         start_half_pulse = curr_time;
@@ -42,7 +63,21 @@ void update_motor_state(unsigned long curr_time) {
       break;
       
     case INSP_HIGH:
-      if (curr_time - start_half_pulse >= T_pulse_insp/2) {
+      // Check for pause
+      if(digitalRead(PIN_PAUSE) == LOW){
+        while(digitalRead(PIN_PAUSE) == LOW){
+          //
+        }
+
+        // Update state for the pause
+        paused_motor_state = motor_state;
+        start_pause = curr_time;
+        motor_state = PAUSE;
+
+        // Disable the motor
+        digitalWrite(PIN_EN,HIGH);
+        
+      } else if (curr_time - start_half_pulse >= T_pulse_insp/2) {
         digitalWrite(PIN_STEP, LOW);
         
         motor_state = INSP_LOW;
@@ -51,7 +86,21 @@ void update_motor_state(unsigned long curr_time) {
       break;
 
     case INSP_LOW:
-      if (curr_time - start_half_pulse >= T_pulse_insp/2) {   
+      // Check for pause
+      if(digitalRead(PIN_PAUSE) == LOW){
+        while(digitalRead(PIN_PAUSE) == LOW){
+          //
+        }
+
+        // Update state for the pause
+        paused_motor_state = motor_state;
+        start_pause = curr_time;
+        motor_state = PAUSE;
+
+        // Disable the motor
+        digitalWrite(PIN_EN,HIGH);
+        
+      } else if (curr_time - start_half_pulse >= T_pulse_insp/2) {   
         rem_pulses--;
 
         digitalWrite(PIN_STEP, HIGH);
@@ -68,7 +117,21 @@ void update_motor_state(unsigned long curr_time) {
       break;
 
     case EXP_HIGH:
-      if (curr_time - start_half_pulse >= T_pulse_exp/2) {
+      // Check for pause
+      if(digitalRead(PIN_PAUSE) == LOW){
+        while(digitalRead(PIN_PAUSE) == LOW){
+          //
+        }
+
+        // Update state for the pause
+        paused_motor_state = motor_state;
+        start_pause = curr_time;
+        motor_state = PAUSE;
+
+        // Disable the motor
+        digitalWrite(PIN_EN,HIGH);
+        
+      } else if (curr_time - start_half_pulse >= T_pulse_exp/2) {
         digitalWrite(PIN_STEP, LOW);
         
         motor_state = EXP_LOW;
@@ -77,7 +140,21 @@ void update_motor_state(unsigned long curr_time) {
       break;
 
     case EXP_LOW:
-      if (curr_time - start_half_pulse >= T_pulse_exp/2) {
+      // Check for pause
+      if(digitalRead(PIN_PAUSE) == LOW){
+        while(digitalRead(PIN_PAUSE) == LOW){
+          //
+        }
+
+        // Update state for the pause
+        paused_motor_state = motor_state;
+        start_pause = curr_time;
+        motor_state = PAUSE;
+
+        // Disable the motor
+        digitalWrite(PIN_EN,HIGH);
+        
+      } else if (curr_time - start_half_pulse >= T_pulse_exp/2) {
         rem_pulses--;
 
         digitalWrite(PIN_STEP, HIGH);
@@ -86,7 +163,8 @@ void update_motor_state(unsigned long curr_time) {
         if (rem_pulses > 0) {
           motor_state = EXP_HIGH;
         } else {
-          digitalWrite(PIN_DIR, INSP_DIR); 
+          digitalWrite(PIN_DIR, INSP_DIR);
+          // Potential breath parameters update 
           motor_state = INSP_HIGH;
           rem_pulses = tot_pulses;
         }
@@ -96,15 +174,41 @@ void update_motor_state(unsigned long curr_time) {
     case WAIT:
       // To be implemented, waiting phase at the end of the expiration phase to spare the motor a bit
       break;
+
+    case PAUSE:
+      if(digitalRead(PIN_PAUSE) == LOW){
+        while(digitalRead(PIN_PAUSE) == LOW){
+          //
+        }
+
+        // Update time with timing offset
+        unsigned long delta_time_pause = curr_time - start_pause;
+        // TODO: is it overflow-proof ?
+        start_half_pulse += delta_time_pause;
+
+        // Update state to get back to the paused state
+        motor_state = paused_motor_state;
+
+        // Re-enable the motor
+        digitalWrite(PIN_EN,LOW);
+      }
+      break;
   }
 }
 
 void setup() {
-  // Nothing to do here
+  pinMode(PIN_EN,OUTPUT);
+  pinMode(PIN_DIR,OUTPUT);
+  pinMode(PIN_STEP,OUTPUT);
+
+  digitalWrite(PIN_EN,HIGH);
+
+
 }
 
 void loop() {
   unsigned long curr_time = micros();
   
   update_motor_state(curr_time);
+  
 }
