@@ -39,7 +39,7 @@
 #define leftPin           2
 #define rightPin          3
 #define upPin             4  
-#define downPin           5
+#define downPin           4
 #define vTidalDownPin     14 //A0
 #define vTidalUpPin       15 //A1
 #define freqRespiDownPin  17 //A3
@@ -69,6 +69,7 @@
 
 #define alarmPin          7
 #define powerSensePin     6
+#define gatePin           5
 #define pressureSensePin  A5
 
 #define ARRAY_SIZE(array) ((sizeof(array))/(sizeof(array[0])))
@@ -103,7 +104,6 @@ byte pMaxVal = PMAX_DEFAULT;
 byte fRespi = FRESPI_DEFAULT;
 int  vTidal = VTIDAL_DEFAULT;
 byte inExpRate = IERATE_DEFAULT;
-//byte dummyVariable; // Must exist. Don't know why...
 byte startStopState;
 
 int sPressure = 0;
@@ -132,12 +132,12 @@ int sLowPower = 1;
 void setup()
 {
   startStopState = 0;
-  //dummyVariable = 0;
   
   Serial.begin(9600);
-  Serial.println("Hello, world!");
+  Serial.println("Breath for Life, hello!");
   
   pinMode(alarmPin,OUTPUT);
+  pinMode(gatePin,OUTPUT);
   pinMode(leftPin,INPUT_PULLUP);
   pinMode(rightPin,INPUT_PULLUP);
   pinMode(upPin,INPUT_PULLUP);
@@ -149,6 +149,8 @@ void setup()
   
   pinMode(startStopPin,INPUT_PULLUP);
   pinMode(powerSensePin,INPUT_PULLUP);
+
+  digitalWrite(gatePin,HIGH);
 
   lcd.begin(16, 2);
   lcd.setCursor(0,0);
@@ -236,8 +238,7 @@ void loop()
       if (screenType>=ALERT_MAX_PRESSURE){
         // An alarm was triggered -> Don't record button pushes until error is present
         // i.e. : push any button once for reset, if error gone, return to normal, if not, button had no effect
-        // reset alarm on any push of a button
-        //digitalWrite(alarmPin,LOW);  
+        // reset alarm on any push of a button  
         //noTone(alarmPin);
         //screenType = UPDATE_STATE; // acts as reset alarm
         stop_alarm();
@@ -417,13 +418,13 @@ void set_alert() {
     lcd.print("Err????");
     break;
   }
-  //tone(alarmPin,1000);
-  //digitalWrite(alarmPin,HIGH);
+  digitalWrite(gatePin,LOW);
 }
 
 // ALARM functions
 void stop_alarm() {
   noTone(alarmPin);
+  digitalWrite(gatePin,HIGH);
   screenType = UPDATE_STATE;
 }
 
