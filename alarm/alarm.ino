@@ -8,12 +8,12 @@
 
 // initialize the library by associating any needed LCD interface pin
 // with the arduino pin number it is connected to
-const int rs = 12, en = 11, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
-const int gatePin = 8;
-const int buttonPin = 9; 
+const int rs = 13, en = 12, d4 = 11, d5 = 10, d6 = 9, d7 = 8;
+const int gatePin = 7;
+const int buttonPin = 5; 
+const int poweSensePin = 6;
 
 int val = 0;
-const int analogPin = 0;
 float ANALOG_RANGE = 1023.0;
 int counter = 0;
 int buttonState = 0; 
@@ -26,7 +26,9 @@ void setup() {
   lcd.begin(16, 2);
 
   // initialize the pushbutton pin as an input:
-  pinMode(buttonPin, INPUT);
+  pinMode(buttonPin, INPUT_PULLUP);
+
+  pinMode(poweSensePin, INPUT);
   
   // Print a message to the LCD.
   lcd.print("ALARM MODULE");
@@ -42,10 +44,9 @@ void loop() {
   delay(500);
   lcd.clear();
   
-  val = analogRead(analogPin);
-  int low_battery_flag = int(val/ANALOG_RANGE + 0.1);
+  
+  int low_battery_flag = digitalRead(poweSensePin) == HIGH;
   Serial.println(low_battery_flag);
-  Serial.println(val);
   
   if (low_battery_flag){
     lcd.clear();
@@ -55,7 +56,7 @@ void loop() {
     delay(500);
   }
 
-  if (counter == 30) {
+  if (counter == 15) {
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Alarme ACTIVEE");

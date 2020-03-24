@@ -19,12 +19,12 @@
 #define VTIDAL_MIN          300
 #define VTIDAL_MAX          600
 #define VTIDAL_STEP         10
-#define VTIDAL_DEFAULT         450
+#define VTIDAL_DEFAULT      450
 
 #define PMAX_MIN            20
 #define PMAX_MAX            60
 #define PMAX_STEP           1
-#define PMAX_DEFAULT           40
+#define PMAX_DEFAULT        40
 
 #define IERATE_1TO3          0 
 #define IERATE_1TO2          1
@@ -33,12 +33,11 @@
 #define IERATE_2TO1          4
 #define IERATE_DEFAULT       IERATE_1TO15
 
-#define INTER_BUTTON_DELAY      100
-#define INTER_STARTSTOP_DELAY   500
+#define INTER_BUTTON_DELAY      100000
+#define INTER_STARTSTOP_DELAY   500000
 
-
-#define leftPin          2
-#define rightPin         3
+#define leftPin           2
+#define rightPin          3
 #define upPin             4  
 #define downPin           5
 #define vTidalDownPin     14 //A0
@@ -46,6 +45,19 @@
 #define freqRespiDownPin  17 //A3
 #define freqRespiUpPin    16 //A3
 #define startStopPin      18 //A4 : I2C must NOT be used
+
+// HPA timings
+// int timeHighPriority[] = {150,120,150,120,150,400,150,120,150,2000};
+#define dAlarmHP          150000
+#define dAlarmHP_Spause   120000
+#define dAlarmHP_Lpause   400000
+#define dAlarmHP_LLpause  2000000
+
+// LPA timings
+// int timeMediumPriority[] = {250,120,250,120,250,2000};
+#define dAlarmLP          250000
+#define dAlarmLP_Spause   120000
+#define dAlarmLP_LLpause  2000000
 
 // LCD screen pins
 #define pin_RS 13 //7
@@ -55,17 +67,19 @@
 #define pin_D2 9  //3
 #define pin_D1 8  //2
 
-#define alarmPin 7
-#define powerSensePin  6
-#define pressureSensePin A5
+#define alarmPin          7
+#define powerSensePin     6
+#define pressureSensePin  A5
+
+#define ARRAY_SIZE(array) ((sizeof(array))/(sizeof(array[0])))
 
 LiquidCrystal lcd(pin_RS, pin_EN, pin_D4, pin_D3, pin_D2, pin_D1);
 
-unsigned int dIF =          100000;  //enter every 100ms
-unsigned int dMot =         10000;
-unsigned int dSense =       10000; 
-unsigned int dButton =      40000;
-unsigned int dInterButton = 0;
+unsigned long dIF =          100000;  //enter every 100ms
+unsigned long dMot =         5000000;
+unsigned long dSense =       10000; 
+unsigned long dButton =      10000;
+unsigned long dInterButton = 0;
 
 unsigned long tInIF;
 unsigned long tInMot;
@@ -73,6 +87,13 @@ unsigned long tInSense;
 unsigned long tInButton;
 unsigned long tLastButton;
 unsigned long currTime;
+
+unsigned long tInAlarm;
+unsigned long tAbsAlarm;
+
+// Tones for Alarm
+int toneHighPriority[] = {262,0,440,0,349,0,440,0,349,0};
+int toneMediumPriority[] = {262,0,440,0,349,0};
 
 byte currParam = PARAM_PMAX;
 byte screenType = UPDATE_STATE;
@@ -82,7 +103,7 @@ byte pMaxVal = PMAX_DEFAULT;
 byte fRespi = FRESPI_DEFAULT;
 int  vTidal = VTIDAL_DEFAULT;
 byte inExpRate = IERATE_DEFAULT;
-byte dummyVariable; // Must exist. Don't know why...
+//byte dummyVariable; // Must exist. Don't know why...
 byte startStopState;
 
 int sPressure = 0;
@@ -111,7 +132,10 @@ int sLowPower = 1;
 void setup()
 {
   startStopState = 0;
-  dummyVariable = 0;
+  //dummyVariable = 0;
+  
+  Serial.begin(9600);
+  Serial.println("Hello, world!");
   
   pinMode(alarmPin,OUTPUT);
   pinMode(leftPin,INPUT_PULLUP);
@@ -139,7 +163,10 @@ void setup()
   tInMot = micros();
   tInSense = micros(); 
   tInButton = micros();
+  tInAlarm = micros();
+  tAbsAlarm = micros();
   set_interface();
+  
 }
 
 
@@ -178,12 +205,14 @@ void loop()
     if (sPressure>=pMaxVal){
       screenType = ALERT_MAX_PRESSURE;
     }
-    if (digitalRead(powerSensePin)==LOW) {
+    if (digitalRead(powerSensePin)==HIGH) {
       screenType = ALERT_POWER_SUPPLY;
       // TODO : Deactivate motors
     }
   } 
-  if(tInButton+dButton+dInterButton<currTime){
+
+  if((tInButton+dButton+dInterButton)<currTime){
+      
     tInButton = micros();
     
     // Read buttons, update state
@@ -200,15 +229,18 @@ void loop()
     byte startStopVal = digitalRead(startStopPin);
     
     if (leftVal==LOW || rightVal==LOW || upVal==LOW || downVal==LOW || vTidalDownVal==LOW || vTidalUpVal==LOW || freqRespiDownVal==LOW || freqRespiUpVal == LOW || startStopVal == LOW){
+      //Serial.println(currTime);
+      
       // record time of last push
       tLastButton=micros();
       if (screenType>=ALERT_MAX_PRESSURE){
         // An alarm was triggered -> Don't record button pushes until error is present
         // i.e. : push any button once for reset, if error gone, return to normal, if not, button had no effect
         // reset alarm on any push of a button
-        digitalWrite(alarmPin,LOW);  
+        //digitalWrite(alarmPin,LOW);  
         //noTone(alarmPin);
-        screenType = UPDATE_STATE; // acts as reset alarm
+        //screenType = UPDATE_STATE; // acts as reset alarm
+        stop_alarm();
       } else {
         // update screen : either values or reset alarm
         screenType = UPDATE_STATE;
@@ -247,11 +279,81 @@ void loop()
           inExpRate = (inExpRate==IERATE_1TO3) ? IERATE_1TO3 : inExpRate-1;
         }
       }
-    } else {
+    } 
+    
+    else {
       // no button was pressed, reset inter button additional delay
       dInterButton = 0;
     }
-  }  
+  }
+
+  // HPA
+  if (screenType == ALERT_POWER_SUPPLY){
+
+      update_tAbsAlarm();
+
+      if (tAbsAlarm < dAlarmHP) {
+        tone(alarmPin,toneHighPriority[0]);
+      }
+      if (tAbsAlarm > dAlarmHP && tAbsAlarm < (dAlarmHP + dAlarmHP_Spause)) {
+        noTone(alarmPin);
+      }
+      if (tAbsAlarm > dAlarmHP + dAlarmHP_Spause && tAbsAlarm < (2*dAlarmHP + dAlarmHP_Spause)) {
+        tone(alarmPin,toneHighPriority[2]);
+      }
+      if (tAbsAlarm > (2*dAlarmHP + dAlarmHP_Spause) && tAbsAlarm < (2*dAlarmHP + 2*dAlarmHP_Spause)) {
+        noTone(alarmPin);
+      }
+      if (tAbsAlarm > (2*dAlarmHP + 2*dAlarmHP_Spause) && tAbsAlarm < (3*dAlarmHP + 2*dAlarmHP_Spause)) {
+        tone(alarmPin,toneHighPriority[4]);
+      }
+      if (tAbsAlarm > (3*dAlarmHP + 2*dAlarmHP_Spause) && tAbsAlarm < (3*dAlarmHP + 2*dAlarmHP_Spause + dAlarmHP_Lpause)) {
+        noTone(alarmPin);
+      }
+      if (tAbsAlarm > (3*dAlarmHP + 2*dAlarmHP_Spause + dAlarmHP_Lpause) && tAbsAlarm < (4*dAlarmHP + 2*dAlarmHP_Spause + dAlarmHP_Lpause)) {
+        tone(alarmPin,toneHighPriority[6]);
+      }
+      if (tAbsAlarm > (4*dAlarmHP + 2*dAlarmHP_Spause + dAlarmHP_Lpause) && tAbsAlarm < (4*dAlarmHP + 3*dAlarmHP_Spause + dAlarmHP_Lpause)) {
+        noTone(alarmPin);
+      }
+      if (tAbsAlarm > (4*dAlarmHP + 3*dAlarmHP_Spause + dAlarmHP_Lpause) && tAbsAlarm < (5*dAlarmHP + 3*dAlarmHP_Spause + dAlarmHP_Lpause)) {
+        tone(alarmPin,toneHighPriority[8]);
+      }
+      if (tAbsAlarm > (5*dAlarmHP + 3*dAlarmHP_Spause + dAlarmHP_Lpause) && tAbsAlarm < (5*dAlarmHP + 3*dAlarmHP_Spause +  dAlarmHP_Lpause + dAlarmHP_LLpause)) {
+        noTone(alarmPin);
+      }
+      if (tAbsAlarm > (5*dAlarmHP + 3*dAlarmHP_Spause +  dAlarmHP_Lpause + dAlarmHP_LLpause)) {
+        tAbsAlarm = 0;
+      }
+  }
+  // LPA
+  else if (screenType == ALERT_MAX_PRESSURE){
+
+      update_tAbsAlarm();
+
+      if (tAbsAlarm < dAlarmHP) {
+        tone(alarmPin,toneMediumPriority[0]);
+      }
+      if (tAbsAlarm > dAlarmHP && tAbsAlarm < (dAlarmHP + dAlarmHP_Spause)) {
+        noTone(alarmPin);
+      }
+      if (tAbsAlarm > dAlarmHP + dAlarmHP_Spause && tAbsAlarm < (2*dAlarmHP + dAlarmHP_Spause)) {
+        tone(alarmPin,toneMediumPriority[2]);
+      }
+      if (tAbsAlarm > (2*dAlarmHP + dAlarmHP_Spause) && tAbsAlarm < (2*dAlarmHP + 2*dAlarmHP_Spause)) {
+        noTone(alarmPin);
+      }
+      if (tAbsAlarm > (2*dAlarmHP + 2*dAlarmHP_Spause) && tAbsAlarm < (3*dAlarmHP + 2*dAlarmHP_Spause)) {
+        tone(alarmPin,toneMediumPriority[4]);
+      }
+      if (tAbsAlarm > (3*dAlarmHP + 2*dAlarmHP_Spause) && tAbsAlarm < (3*dAlarmHP + 2*dAlarmHP_Spause + dAlarmHP_LLpause)) {
+        noTone(alarmPin);
+      }
+      if (tAbsAlarm > (3*dAlarmHP + 2*dAlarmHP_Spause + dAlarmHP_LLpause)) {
+        tAbsAlarm = 0;
+      }
+  }
+
 }
 
 void set_pressure() {
@@ -316,5 +418,21 @@ void set_alert() {
     break;
   }
   //tone(alarmPin,1000);
-  digitalWrite(alarmPin,HIGH);
+  //digitalWrite(alarmPin,HIGH);
+}
+
+// ALARM functions
+void stop_alarm() {
+  noTone(alarmPin);
+  screenType = UPDATE_STATE;
+}
+
+void update_tAbsAlarm() {
+  if (tAbsAlarm == 0) {
+    tInAlarm = currTime;
+    tAbsAlarm = micros() - currTime;
   }
+  else{
+    tAbsAlarm = micros() - tInAlarm;
+  }
+}
