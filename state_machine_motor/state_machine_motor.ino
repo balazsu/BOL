@@ -30,7 +30,7 @@ const uint32_t T_home = 2*TCT;
 
 // Motor parameters
 const uint32_t m_steps = 16;                     // µsteps per step
-const uint32_t n_steps = 650;                    // total motor steps
+const uint32_t n_steps = 100;                    // total motor steps
 const uint32_t tot_pulses = n_steps * m_steps;   // total µsteps/pulses needed
 const uint32_t pulses_home_final = m_steps * 50;   // amount of step to properly set the initial low point
 
@@ -154,10 +154,8 @@ void poll_motor_hl(uint32_t curr_time) {
             }
             break;
         case HOME_FINAL:
-            if (!motor_moving()){
-              motor_hl_st = FAIL;
-            } else if (digitalRead(PIN_ECS_UP) == LOW){
-              motor_hl_st = INIT;//post_home_st;
+            if ((digitalRead(PIN_ECS_UP) == LOW) && !motor_moving()){
+              motor_hl_st = post_home_st;
             }
             break;
 
