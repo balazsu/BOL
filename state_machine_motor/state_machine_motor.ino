@@ -22,16 +22,17 @@
 
 
 // Breath parameters
-const unsigned long TCT = 9 * 1000000;    // Total cycle time [µs]
-const unsigned long Ti = 3 * 1000000;     // Inspiration time [µs]
+const unsigned long TCT = 5 * 1000000;    // Total cycle time [µs]
+const unsigned long Ti = 2.5 * 1000000;     // Inspiration time [µs]
 
 const unsigned long Te = TCT - Ti;          // Expiration time [µs]
 const uint32_t T_home = 2*TCT;
 
 // Motor parameters
 const uint32_t m_steps = 16;                     // µsteps per step
-const uint32_t n_steps = 600;                    // total motor steps
+const uint32_t n_steps = 650;                    // total motor steps
 const uint32_t tot_pulses = n_steps * m_steps;   // total µsteps/pulses needed
+const uint32_t pulses_home_final = m_steps * 50;   // amount of step to properly set the initial low point
 
 const uint32_t pulses_full_range = 800 * m_steps;   // total µsteps/pulses needed
 
@@ -102,7 +103,7 @@ bool motor_moving() {
 
 //////////// High-level motor control //////////////
 
-typedef enum {INIT, INSP, EXP, WAIT, HOME_FIRST, HOME_SEC, HOME_UP, PAUSE, FAIL} motor_state;
+typedef enum {INIT, INSP, EXP, WAIT, HOME_FIRST, HOME_SEC, HOME_UP, HOME_FINAL, PAUSE, FAIL} motor_state;
 motor_state motor_hl_st;
 
 const motor_state post_home_st = EXP; // will start INSP
@@ -148,7 +149,15 @@ void poll_motor_hl(uint32_t curr_time) {
             if (!motor_moving()) {
                 motor_hl_st = FAIL;
             } else if (digitalRead(PIN_ECS_UP) == HIGH) {
-                motor_hl_st = post_home_st;
+                motor_hl_st = HOME_FINAL;
+                move_motor(pulses_home_final, T_pulse_home, INSP_DIR, curr_time);
+            }
+            break;
+        case HOME_FINAL:
+            if (!motor_moving()){
+              motor_hl_st = FAIL;
+            } else if (digitalRead(PIN_ECS_UP) == LOW){
+              motor_hl_st = INIT;//post_home_st;
             }
             break;
 
@@ -198,4 +207,3 @@ void loop() {
   poll_motor_hl(curr_time);
   
 }
-
