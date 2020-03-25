@@ -39,7 +39,7 @@
 #define leftPin           2
 #define rightPin          3
 #define upPin             4  
-#define downPin           4
+#define downPin           5
 #define vTidalDownPin     14 //A0
 #define vTidalUpPin       15 //A1
 #define freqRespiDownPin  17 //A3
@@ -69,15 +69,18 @@
 
 #define alarmPin          7
 #define powerSensePin     6
-#define gatePin           5
+//#define gatePin           1
 #define pressureSensePin  A5
+
+#define PEAK_MA_SIZE    128 // power of 2, moving average length
+#define PEAK_MASK   PEAK_MA_SIZE-1
 
 #define ARRAY_SIZE(array) ((sizeof(array))/(sizeof(array[0])))
 
 LiquidCrystal lcd(pin_RS, pin_EN, pin_D4, pin_D3, pin_D2, pin_D1);
 
 unsigned long dIF =          100000;  //enter every 100ms
-unsigned long dMot =         5000000;
+unsigned long dMot =         5000;
 unsigned long dSense =       10000; 
 unsigned long dButton =      10000;
 unsigned long dInterButton = 0;
@@ -104,12 +107,18 @@ byte pMaxVal = PMAX_DEFAULT;
 byte fRespi = FRESPI_DEFAULT;
 int  vTidal = VTIDAL_DEFAULT;
 byte inExpRate = IERATE_DEFAULT;
+byte dummy; // must be kept, working on why
 byte startStopState;
 
 int sPressure = 0;
 int sPressureMax = 0;
+int sPressureLastCycleMax = 0;
 double sPressureV;
+int sPressurePrev[PEAK_MA_SIZE] = {}; 
+byte sPrevPtr = 0;
+long sPressureSum; 
 int sLowPower = 1;
+bool wasPeak=false, isPeak=false;
 
 /*
    MPX5010DP (http://www.farnell.com/datasheets/2097509.pdf)
@@ -132,12 +141,9 @@ int sLowPower = 1;
 void setup()
 {
   startStopState = 0;
-  
-  Serial.begin(9600);
-  Serial.println("Breath for Life, hello!");
-  
+  dummy=0;
   pinMode(alarmPin,OUTPUT);
-  pinMode(gatePin,OUTPUT);
+  //pinMode(gatePin,OUTPUT);
   pinMode(leftPin,INPUT_PULLUP);
   pinMode(rightPin,INPUT_PULLUP);
   pinMode(upPin,INPUT_PULLUP);
@@ -150,7 +156,7 @@ void setup()
   pinMode(startStopPin,INPUT_PULLUP);
   pinMode(powerSensePin,INPUT_PULLUP);
 
-  digitalWrite(gatePin,HIGH);
+  //digitalWrite(gatePin,HIGH);
 
   lcd.begin(16, 2);
   lcd.setCursor(0,0);
@@ -204,6 +210,24 @@ void loop()
     // screenType = ALERT_MAX_PRESSURE;
     sPressureV = analogRead(pressureSensePin) * 0.0049;
     sPressure = int((sPressureV / 5.0 - 0.04) / 0.09 * 101.971); // Transfer function + Convert kPa to mmH20
+    
+    // Calculate moving average (sum)
+    sPressureSum = sPressure + sPressureSum - sPressurePrev[sPrevPtr];
+    // Update prev list
+    sPressurePrev[sPrevPtr] = sPressure;
+    sPrevPtr+=1;
+    sPrevPtr = sPrevPtr & PEAK_MASK;
+    // Calculate if sensed value is deviating PEAK_THR*stddev from the moving average over PEAK_MA_SIZE
+    wasPeak = isPeak;
+    isPeak = sPressure*PEAK_MA_SIZE;
+    // Check if peak: record max
+    sPressureMax = (isPeak && sPressureMax<sPressure) ? sPressure : sPressureMax;
+    // If not Peak but was peak, update screen & reset sPressureMax
+    if (!isPeak && wasPeak) {
+      sPressureLastCycleMax = sPressureMax;
+      sPressureMax = 0;
+    }
+    
     if (sPressure>=pMaxVal){
       screenType = ALERT_MAX_PRESSURE;
     }
@@ -359,7 +383,7 @@ void loop()
 
 void set_pressure() {
   lcd.setCursor(0,0);
-  sprintf(screenBuffer,"P%2d Pic%2d",sPressure,sPressureMax);
+  sprintf(screenBuffer,"P%2d Pic%2d",sPressure,sPressureLastCycleMax);
   lcd.print(screenBuffer);
 }
 
@@ -418,13 +442,13 @@ void set_alert() {
     lcd.print("Err????");
     break;
   }
-  digitalWrite(gatePin,LOW);
+  //digitalWrite(gatePin,LOW);
 }
 
 // ALARM functions
 void stop_alarm() {
   noTone(alarmPin);
-  digitalWrite(gatePin,HIGH);
+  //digitalWrite(gatePin,HIGH);
   screenType = UPDATE_STATE;
 }
 
