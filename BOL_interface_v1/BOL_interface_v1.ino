@@ -101,13 +101,12 @@ int toneMediumPriority[] = {262,0,440,0,349,0};
 
 byte currParam = PARAM_PMAX;
 byte screenType = UPDATE_STATE;
-char screenBuffer[9];
+char screenBuffer[10];
 
 byte pMaxVal = PMAX_DEFAULT;
 byte fRespi = FRESPI_DEFAULT;
 int  vTidal = VTIDAL_DEFAULT;
 byte inExpRate = IERATE_DEFAULT;
-byte dummy; // must be kept, working on why
 byte startStopState;
 
 int sPressure = 0;
@@ -141,7 +140,6 @@ bool wasPeak=false, isPeak=false;
 void setup()
 {
   startStopState = 0;
-  dummy=0;
   pinMode(alarmPin,OUTPUT);
   //pinMode(gatePin,OUTPUT);
   pinMode(leftPin,INPUT_PULLUP);
@@ -383,7 +381,7 @@ void loop()
 
 void set_pressure() {
   lcd.setCursor(0,0);
-  sprintf(screenBuffer,"P%2d Pic%2d",sPressure,sPressureLastCycleMax);
+  sprintf(screenBuffer," %2d %2d",(sPressure>=0)?sPressure:0,sPressureLastCycleMax);
   lcd.print(screenBuffer);
 }
 
