@@ -42,6 +42,13 @@ unsigned long T_pulse_exp = Te/tot_pulses;
 uint32_t T_pulse_home = T_home/pulses_full_range;
 
 
+uint32_t curr_pulses;
+
+uint32_t pulses_nb[] = { 200, 200, 200, 250, 300, 350, 400, 450, 500, 550, 600 };
+uint32_t pulses_offset = 0;
+uint32_t nb_breathings = sizeof(pulses_nb)/sizeof(pulses_nb[0]);
+
+
 //////////// Low-level motor control //////////////
 uint32_t rem_steps;
 uint32_t half_step_dur; // us
@@ -161,7 +168,7 @@ void poll_motor_hl(uint32_t curr_time) {
 
         case INSP:
             if (!motor_moving() || digitalRead(PIN_ECS_DOWN) == HIGH) {
-                move_motor(tot_pulses, T_pulse_exp, EXP_DIR, curr_time);
+                move_motor(curr_pulses, Te/curr_pulses, EXP_DIR, curr_time);
                 motor_hl_st = EXP;
                 PRINTLN("start exp");
             }
@@ -169,9 +176,15 @@ void poll_motor_hl(uint32_t curr_time) {
 
         case EXP:
             if (!motor_moving() || digitalRead(PIN_ECS_UP) == HIGH) {
-                move_motor(tot_pulses, T_pulse_insp, INSP_DIR, curr_time);
-                motor_hl_st = INSP;
-                PRINTLN("start insp");
+                if (pulses_offset >= nb_breathings) {
+                    motor_hl_st = FAIL;
+                } else {
+                    curr_pulses = m_steps*pulses_nb[pulses_offset];
+                    pulses_offset += 1;
+                    move_motor(curr_pulses, Ti/curr_pulses, INSP_DIR, curr_time);
+                    motor_hl_st = INSP;
+                    PRINTLN("start insp");
+                }
             }
             break;
 
