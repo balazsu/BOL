@@ -36,15 +36,15 @@
 #define INTER_BUTTON_DELAY      100000
 #define INTER_STARTSTOP_DELAY   500000
 
-#define leftPin           2
-#define rightPin          3
-#define upPin             4  
-#define downPin           5
-#define vTidalDownPin     14 //A0
-#define vTidalUpPin       15 //A1
-#define freqRespiDownPin  17 //A3
-#define freqRespiUpPin    16 //A3
-#define startStopPin      18 //A4 : I2C must NOT be used
+#define leftPin           21
+#define rightPin          20
+#define upPin             19  
+#define downPin           18
+#define vTidalDownPin     17 //A0
+#define vTidalUpPin       16 //A1
+#define freqRespiDownPin  15 //A3
+#define freqRespiUpPin    14 //A3
+#define startStopPin      2 //A4 : I2C must NOT be used
 
 // HPA timings
 // int timeHighPriority[] = {150,120,150,120,150,400,150,120,150,2000};
@@ -60,17 +60,17 @@
 #define dAlarmLP_LLpause  2000000
 
 // LCD screen pins
-#define pin_RS 13 //7
-#define pin_EN 12 //6
-#define pin_D4 11 //5
-#define pin_D3 10 //4
-#define pin_D2 9  //3
-#define pin_D1 8  //2
+#define pin_RS 53
+#define pin_EN 51 
+#define pin_D4 41 
+#define pin_D3 43 
+#define pin_D2 45 
+#define pin_D1 47 
 
-#define alarmPin          7
-#define powerSensePin     6
+#define alarmPin          8
+#define powerSensePin     7
 //#define gatePin           1
-#define pressureSensePin  A5
+#define pressureSensePin  A0
 
 #define PEAK_MA_SIZE    128 // power of 2, moving average length
 #define PEAK_MASK   PEAK_MA_SIZE-1
@@ -376,6 +376,7 @@ void loop()
         tAbsAlarm = 0;
       }
   }
+
 
 }
 
