@@ -30,15 +30,21 @@ const uint32_t T_home = 2*TCT;
 
 // Motor parameters
 const uint32_t m_steps = 16;                     // µsteps per step
-const uint32_t n_steps = 100;                    // total motor steps
+const uint32_t n_steps = 500;                    // total motor steps
 const uint32_t tot_pulses = n_steps * m_steps;   // total µsteps/pulses needed
-const uint32_t pulses_home_final = m_steps * 50;   // amount of step to properly set the initial low point
 
+const uint32_t plateau_pulses = tot_pulses/20;
+const uint32_t insp_pulses = tot_pulses - plateau_pulses;
+const uint32_t exp_pulses = tot_pulses;
+
+const uint32_t pulses_home_final = m_steps * 50;   // amount of step to properly set the initial low point
 const uint32_t pulses_full_range = 800 * m_steps;   // total µsteps/pulses needed
 
 // Pulse periods
-unsigned long T_pulse_insp = Ti/tot_pulses;
-unsigned long T_pulse_exp = Te/tot_pulses;  
+unsigned long T_pulse_insp = Ti/(insp_pulses*2);
+unsigned long T_pulse_plateau = Ti/(plateau_pulses*2);
+unsigned long T_pulse_exp = 1000000/(m_steps*500);
+uint32_t exp_wait_time = Te - T_pulse_exp*exp_pulses;
 uint32_t T_pulse_home = T_home/pulses_full_range;
 
 
@@ -98,15 +104,34 @@ void move_motor(uint32_t n_steps, uint32_t step_dur, uint32_t dir, uint32_t curr
 bool motor_moving() {
     return rem_steps != 0;
 }
+
+void stop_motor(void) {
+    rem_steps = 0;
+}
 ///////////////////////////////////////
 
 
 //////////// High-level motor control //////////////
 
-typedef enum {INIT, INSP, EXP, WAIT, HOME_FIRST, HOME_SEC, HOME_UP, HOME_FINAL, PAUSE, FAIL} motor_state;
+typedef enum {
+    INIT,
+    INSP,
+    PLATEAU,
+    EXP_MOVE,
+    EXP_WAIT,
+    WAIT,
+    HOME_FIRST,
+    HOME_SEC,
+    HOME_UP,
+    HOME_FINAL,
+    PAUSE,
+    FAIL
+    } motor_state;
 motor_state motor_hl_st;
 
-const motor_state post_home_st = EXP; // will start INSP
+uint32_t exp_end_time;
+
+const motor_state post_home_st = EXP_WAIT; // will start INSP
 
 void init_motor_hl(void) {
     motor_hl_st = INIT;
@@ -161,15 +186,34 @@ void poll_motor_hl(uint32_t curr_time) {
 
         case INSP:
             if (!motor_moving() || digitalRead(PIN_ECS_DOWN) == HIGH) {
-                move_motor(tot_pulses, T_pulse_exp, EXP_DIR, curr_time);
-                motor_hl_st = EXP;
-                PRINTLN("start exp");
+                move_motor(plateau_pulses, T_pulse_plateau, INSP_DIR, curr_time);
+                motor_hl_st = PLATEAU;
+                PRINTLN("start plateau");
             }
             break;
 
-        case EXP:
+        case PLATEAU:
+            if (!motor_moving() || digitalRead(PIN_ECS_DOWN) == HIGH) {
+                move_motor(exp_pulses, T_pulse_exp, EXP_DIR, curr_time);
+                motor_hl_st = EXP_MOVE;
+                PRINTLN("start exp_move");
+            }
+            break;
+
+        case EXP_MOVE:
             if (!motor_moving() || digitalRead(PIN_ECS_UP) == HIGH) {
-                move_motor(tot_pulses, T_pulse_insp, INSP_DIR, curr_time);
+                stop_motor();
+                disable_motor();
+                motor_hl_st = EXP_WAIT;
+                exp_end_time = curr_time + exp_wait_time;
+                PRINTLN("start exp_wait");
+            }
+            break;
+
+        case EXP_WAIT:
+            if (curr_time >= exp_end_time) {
+                enable_motor();
+                move_motor(insp_pulses, T_pulse_insp, INSP_DIR, curr_time);
                 motor_hl_st = INSP;
                 PRINTLN("start insp");
             }
