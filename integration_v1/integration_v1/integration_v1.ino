@@ -16,10 +16,10 @@
 #define FRESPI_STEP         1
 #define FRESPI_DEFAULT      15
 
-#define VTIDAL_MIN          300
+#define VTIDAL_MIN          100
 #define VTIDAL_MAX          600
 #define VTIDAL_STEP         10
-#define VTIDAL_DEFAULT      450
+#define VTIDAL_DEFAULT      VTIDAL_MIN
 
 #define PMAX_MIN            20
 #define PMAX_MAX            60
@@ -135,19 +135,26 @@ unsigned long TCT;// = 5 * 1000000;    // Total cycle time [µs]
 unsigned long Ti;// = 2.5 * 1000000;     // Inspiration time [µs]
 
 unsigned long Te;// = TCT - Ti;          // Expiration time [µs]
+unsigned long Te_practical;
 uint32_t T_home;// = 2*TCT;
 
 // Motor parameters
 const uint32_t m_steps = 16;                     // µsteps per step
 uint32_t n_steps ;//= 100;                    // total motor steps
 uint32_t tot_pulses ;//= n_steps * m_steps;   // total µsteps/pulses needed
-const uint32_t pulses_home_final = m_steps * 50;   // amount of step to properly set the initial low point
 
+uint32_t plateau_pulses ;//= tot_pulses/20;
+uint32_t insp_pulses ;//= tot_pulses - plateau_pulses;
+uint32_t exp_pulses ;//= tot_pulses;
+
+const uint32_t pulses_home_final = m_steps * 70;   // amount of step to properly set the initial low point
 const uint32_t pulses_full_range = 800 * m_steps;   // total µsteps/pulses needed
 
 // Pulse periods
 unsigned long T_pulse_insp;// = Ti/tot_pulses;
+unsigned long T_pulse_plateau;// = Ti/(plateau_pulses*2);
 unsigned long T_pulse_exp;// = Te/tot_pulses;  
+uint32_t exp_wait_time ; //= Te - T_pulse_exp*exp_pulses;
 uint32_t T_pulse_home;// = T_home/pulses_full_range;
 
 /////// Motor setting configuration
@@ -167,6 +174,9 @@ void config_motor_settings(){
   // Update volume configuration
   n_steps = volume2steps(vTidal);
   tot_pulses = n_steps * m_steps;
+  plateau_pulses = tot_pulses/20;
+  insp_pulses = tot_pulses - plateau_pulses;
+  exp_pulses = tot_pulses;
 
   // Update breathing frequency setting
   // TODO: update type
@@ -187,15 +197,20 @@ void config_motor_settings(){
     Ti = TCT*10 / 15;
   }
   Te = TCT - Ti;
-
+  Te_practical = Te/2;
+  
   T_pulse_insp = Ti/tot_pulses;
-  T_pulse_exp = Te/tot_pulses;
+  T_pulse_plateau = Ti/(plateau_pulses*2);
+  T_pulse_exp = Te_practical/tot_pulses;
+  exp_wait_time = Te - T_pulse_exp*exp_pulses;
 
+  //Serial.println("Config");
   //Serial.println(TCT);
   //Serial.println(Ti);
-  //Serial.println(tot_pulses);
   //Serial.println(T_pulse_insp);
   //Serial.println(Te);
+  //Serial.println(T_pulse_exp);
+  //Serial.println(tot_pulses);
   //Serial.println("");
   //Serial.println(tot_pulses);
   
@@ -257,11 +272,30 @@ bool motor_moving() {
     return rem_steps != 0;
 }
 
+void stop_motor(void) {
+    rem_steps = 0;
+}
+
 //////////// High-level motor control //////////////
-typedef enum {INIT, INSP, EXP, WAIT, HOME_FIRST, HOME_SEC, HOME_UP, HOME_FINAL, PAUSE, FAIL} motor_state;
+typedef enum {
+    INIT,
+    INSP,
+    PLATEAU,
+    EXP_MOVE,
+    EXP_WAIT,
+    WAIT,
+    HOME_FIRST,
+    HOME_SEC,
+    HOME_UP,
+    HOME_FINAL,
+    PAUSE,
+    FAIL
+    } motor_state;
 motor_state motor_hl_st;
 
-const motor_state post_home_st = EXP; // will start INSP
+uint32_t exp_end_time;
+
+const motor_state post_home_st = EXP_WAIT; // will start INSP
 
 void init_motor_hl(void) {
     motor_hl_st = INIT;
@@ -280,7 +314,8 @@ void poll_motor_hl(uint32_t curr_time) {
         // TODO check for another condition
             if (startStopState==1) {
                 enable_motor();
-                motor_hl_st = EXP;//HOME_FIRST;
+                motor_hl_st = HOME_FIRST;
+                config_motor_settings();
             }
             break;
 
@@ -317,14 +352,32 @@ void poll_motor_hl(uint32_t curr_time) {
 
         case INSP:
             if (!motor_moving() || digitalRead(pin_MOTOR_ECS_DOWN) == HIGH) {
-                move_motor(tot_pulses, T_pulse_exp, EXP_DIR, curr_time);
-                motor_hl_st = EXP;
+                move_motor(plateau_pulses, T_pulse_plateau, INSP_DIR, curr_time);
+                motor_hl_st = PLATEAU;
             }
             break;
 
-        case EXP:
+        case PLATEAU:
+            if (!motor_moving() || digitalRead(pin_MOTOR_ECS_DOWN) == HIGH) {
+                move_motor(exp_pulses, T_pulse_exp, EXP_DIR, curr_time);
+                motor_hl_st = EXP_MOVE;
+            }
+            break;
+
+        case EXP_MOVE:
             if (!motor_moving() || digitalRead(pin_MOTOR_ECS_UP) == HIGH) {
-                move_motor(tot_pulses, T_pulse_insp, INSP_DIR, curr_time);
+                stop_motor();
+                disable_motor();
+                motor_hl_st = EXP_WAIT;
+                exp_end_time = curr_time + exp_wait_time;
+            }
+            break;
+
+        case EXP_WAIT:
+            if (curr_time >= exp_end_time) {
+                config_motor_settings();
+                enable_motor();
+                move_motor(insp_pulses, T_pulse_insp, INSP_DIR, curr_time);
                 motor_hl_st = INSP;
             }
             break;
@@ -334,7 +387,7 @@ void poll_motor_hl(uint32_t curr_time) {
             break;
 
         case PAUSE:
-        // to be implemented
+            disable_motor();
             break;
 
         case FAIL:
@@ -608,7 +661,7 @@ void loop()
   }
 
   // MOTOR driving
-  config_motor_settings();
+  //config_motor_settings();
   poll_motor_ll(currTime);
   poll_motor_hl(currTime);
 
