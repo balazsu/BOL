@@ -3,17 +3,18 @@
 
 #include <stdint.h>
 
-////////////////////////
-/////// SFM3000 SENSOR//
-////////////////////////
+// SFM3000 SENSOR
 SFM3000CORE senseFlow(64);
-int32_t offset_sfm3000 = 32768;         // Offset flow, given in datasheet 
-int32_t scale_sfm3000 = 120.0;        // Scale factor for Air & N2 is 140.0, O2 is 142.8
-int32_t air_flow_sfm3000 = 0;         // air flow is given in slm (standard liter per minute)
-int32_t air_volume_sfm3000 = 0;       // total air volume so far in sl 
-
-uint32_t previous_time_sfm3000 = 0;         // time of previous measurement
-////////////////////////
+// Offset flow, given in datasheet 
+int32_t offset_sfm3000 = 32768;
+// Scale factor for Air & N2 is 140.0, O2 is 142.8
+int32_t scale_sfm3000 = 120.0;
+// air flow is given in slm (standard liter per minute)
+int32_t air_flow_sfm3000 = 0;
+// total air volume so far in sl 
+int32_t air_volume_sfm3000 = 0;
+// time of previous measurement
+uint32_t previous_time_sfm3000 = 0;
 
 void init_sfm3000(){
     senseFlow.init();
@@ -68,16 +69,23 @@ void poll_sfm3000(){
     previous_time_sfm3000 = curr_time;
     // update current flow in slm
     air_flow_sfm3000 = flow;
-    Serial.print("air_volume ");
-    Serial.print(air_volume_sfm3000);
-    Serial.print("\tair_flow ");
-    Serial.print(air_flow_sfm3000);
-    Serial.print("\tdelta ");
-    Serial.print(delta);
-    Serial.print("\tinc ");
-    Serial.print(inc);
-    Serial.print("\tn_inc ");
-    Serial.println(n_inc);
+
+    // Sending measured flow and volume on Serial
+    Serial.print("Flow=");
+    Serial.println(air_flow_sfm3000);
+    
+    Serial.print("Vol=");
+    Serial.println(air_volume_sfm3000);
+
+    //Serial.print("air_volume ");
+    //Serial.print(air_volume_sfm3000);
+    //Serial.print("\tair_flow ");
+    //Serial.print("\tdelta ");
+    //Serial.print(delta);
+    //Serial.print("\tinc ");
+    //Serial.print(inc);
+    //Serial.print("\tn_inc ");
+    //Serial.println(n_inc);
 }
 void setup() {
 Serial.begin(9600);
@@ -86,7 +94,6 @@ Serial.begin(9600);
 }
 
 void loop(){
-
     poll_sfm3000();
-    delay(1000);
+    delay(50);
 }
