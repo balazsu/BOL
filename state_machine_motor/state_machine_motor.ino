@@ -1,8 +1,8 @@
-#define PIN_EN 5
-#define PIN_DIR 6
-#define PIN_STEP 7
+#define PIN_EN 3
+#define PIN_DIR 4
+#define PIN_STEP 5
 #define PIN_START 2
-#define PIN_PAUSE 3
+#define PIN_PAUSE 19
 #define PIN_ECS_UP 8
 #define PIN_ECS_DOWN 9
 
@@ -120,6 +120,9 @@ void init_motor_hl(void) {
     // end-couse switches
     pinMode(PIN_ECS_UP, INPUT_PULLUP);
     pinMode(PIN_ECS_DOWN, INPUT_PULLUP);
+    
+    pinMode(PIN_PAUSE, INPUT_PULLUP);
+        pinMode(PIN_START, INPUT_PULLUP);
 }
 
 void poll_motor_hl(uint32_t curr_time) {
