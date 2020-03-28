@@ -52,6 +52,9 @@ void reset_sfm3000(){
     air_flow_sfm3000 = flow;
 }
 
+uint8_t insp_on = 0;
+uint32_t n_non_print = 0;
+
 void poll_sfm3000(){
     uint32_t curr_time = micros();
     uint16_t result = senseFlow.getvalue();
@@ -59,22 +62,26 @@ void poll_sfm3000(){
 
     // time diff [ms]
     int32_t delta = (curr_time - previous_time_sfm3000)/1000;
-
-    // update total volumes using rectangle method (volume in [ml])
-    int32_t inc = delta*flow;
-    int32_t n_inc = inc / (60*1000L);
-    air_volume_sfm3000 +=  n_inc;
-
-    // update previous time
-    previous_time_sfm3000 = curr_time;
-    // update current flow in slm
     air_flow_sfm3000 = flow;
+    previous_time_sfm3000 = curr_time;
 
-    // Sending measured flow and volume on Serial
-    Serial.print("Flow=");
-    Serial.println(air_flow_sfm3000);
-    
-    Serial.print("Vol=");
+    if (flow > 3000L) {
+        insp_on = 1;
+    } else if (flow < 3000L) {
+        insp_on = 0;
+    }
+
+    if (!insp_on) {
+        air_volume_sfm3000 = 0;
+    } else {
+        // update total volumes using rectangle method (volume in [ml])
+        int32_t inc = delta*flow;
+        int32_t n_inc = inc / (60*1000L);
+        air_volume_sfm3000 +=  n_inc;
+    }
+
+    // Send data to serial port for acquiring on my computer
+    //Serial.println(air_flow_sfm3000);
     Serial.println(air_volume_sfm3000);
 
     //Serial.print("air_volume ");

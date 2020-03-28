@@ -48,6 +48,7 @@ LiquidCrystal lcd(pin_RS, pin_EN, pin_D4, pin_D3, pin_D2, pin_D1);
 */
 
 int32_t vout;
+// Pressure is thus in µmH2O
 int32_t p;
 
 const int32_t scale_MPX5010DP = 1110;
@@ -78,7 +79,7 @@ void poll_MPX5010DP(uint32_t curr_time) {
 
 void display_p() {
   static char buffer [20];
-  sprintf(buffer, "p: %4d mmH2O", int(p/1000));
+  sprintf(buffer, "p: %2d cmH2O", int(p/10000));
   lcd.setCursor(0, 0);
   lcd.print(buffer);
 }

@@ -48,8 +48,9 @@ def animate(i, p):
     data = ser.readline()
 
     try:
-        print(float(data.decode()))
-        p[i] = float(data.decode())
+        reading = float(data.decode()) / 1e4
+        print(reading)
+        p[i] = reading
     except ValueError:
         print(data)
         print("ValueError occured.")
