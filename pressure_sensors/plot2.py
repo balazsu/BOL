@@ -22,7 +22,7 @@ N = int(T_acq/T_s) + 1
 p_range = [-5, 60]
 
 fig = plt.figure()
-ax = fig.add_subplot(1 , 1, 1)
+ax = fig.add_subplot(1, 1, 1)
 
 t = np.arange(0, int(N)) * T_s
 p = [0] * N
@@ -49,17 +49,11 @@ def animate(i, p):
 
     try:
         print(float(data.decode()))
-        p.append(float(data.decode()))
+        p[i] = float(data.decode())
     except ValueError:
         print(data)
         print("ValueError occured.")
         return line,
-
-    p = p[-N:]
-    # Smooth a bit the data
-    w = 1
-    p = np.convolve(p, np.ones((w,))/w, mode='full')
-    p = p[0:N]
 
     line.set_ydata(p)
 
