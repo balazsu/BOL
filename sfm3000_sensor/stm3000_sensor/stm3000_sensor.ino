@@ -67,7 +67,7 @@ void poll_sfm3000(){
 
     if (flow > 3000L) {
         insp_on = 1;
-    } else if (flow < 3000L) {
+    } else if (flow < -3000L) {
         insp_on = 0;
     }
 
@@ -95,9 +95,9 @@ void poll_sfm3000(){
     //Serial.println(n_inc);
 }
 void setup() {
-Serial.begin(9600);
+    Serial.begin(9600);
     senseFlow.init();
-        init_sfm3000();
+    init_sfm3000();
 }
 
 void loop(){

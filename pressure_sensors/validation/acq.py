@@ -20,6 +20,17 @@ N = int(T_acq/T_s) + 1
 t = np.arange(0, int(N)) * T_s
 p = [0] * N
 
+# Throw first meaningless measurements + warm-up serial port (weird delay for
+# first readline() otherwise...)
+i = 0
+while i < 5:
+    ser.flushInput()
+    ser.readline()
+    i += 1
+
+print("Ready to acquire. Press enter to start.")
+input()
+
 n = 0;
 while n < N:
     ser.flushInput()
@@ -33,9 +44,9 @@ while n < N:
         print(data)
         print("ValueError occured.")
 
-filename = 'test-long-tube'
+filename = 'data/pressure-mes-distanced-long-tube'
 print("Acquired 1 minute of data. Saved in " + filename + ".npy.")
-np.save('filename', [t, p])
+np.save(filename, [t, p])
 
 fig = plt.figure()
 ax = fig.add_subplot(1, 1, 1)
