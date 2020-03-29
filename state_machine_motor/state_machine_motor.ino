@@ -34,7 +34,7 @@ const uint32_t n_steps = 100;                    // total motor steps
 const uint32_t tot_pulses = n_steps * m_steps;   // total µsteps/pulses needed
 const uint32_t pulses_home_final = m_steps * 50;   // amount of step to properly set the initial low point
 
-const uint32_t pulses_full_range = 800 * m_steps;   // total µsteps/pulses needed
+const uint32_t pulses_full_range = 1000 * m_steps;   // total µsteps/pulses needed
 
 // Pulse periods
 unsigned long T_pulse_insp = Ti/tot_pulses;
@@ -44,7 +44,7 @@ uint32_t T_pulse_home = T_home/pulses_full_range;
 
 uint32_t curr_pulses;
 
-uint32_t pulses_nb[] = { 200, 200, 200, 250, 300, 350, 400, 450, 500, 550, 600 };
+uint32_t pulses_nb[] = {350, 350, 350, 350, 400, 450, 500, 550, 600, 650, 700, 750};
 uint32_t pulses_offset = 0;
 uint32_t nb_breathings = sizeof(pulses_nb)/sizeof(pulses_nb[0]);
 
