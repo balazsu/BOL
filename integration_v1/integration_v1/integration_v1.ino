@@ -11,15 +11,15 @@
 #define PARAM_PMAX          0
 #define PARAM_IERATE        1
 
-#define FRESPI_MIN          12
+#define FRESPI_MIN          5
 #define FRESPI_MAX          20
 #define FRESPI_STEP         1
 #define FRESPI_DEFAULT      15
 
-#define VTIDAL_MIN          300
+#define VTIDAL_MIN          100
 #define VTIDAL_MAX          600
 #define VTIDAL_STEP         10
-#define VTIDAL_DEFAULT      450
+#define VTIDAL_DEFAULT      VTIDAL_MIN
 
 #define PMAX_MIN            20
 #define PMAX_MAX            60
@@ -77,6 +77,16 @@
 
 #define ARRAY_SIZE(array) ((sizeof(array))/(sizeof(array[0])))
 
+#define pin_MOTOR_EN 3
+#define pin_MOTOR_DIR 4
+#define pin_MOTOR_STEP 5
+#define pin_MOTOR_ECS_UP 8
+#define pin_MOTOR_ECS_DOWN 9
+// TO DO: check correct directions for inspiration/expirations phases
+#define INSP_DIR HIGH
+#define EXP_DIR LOW
+
+
 LiquidCrystal lcd(pin_RS, pin_EN, pin_D4, pin_D3, pin_D2, pin_D1);
 
 unsigned long dIF =          100000;  //enter every 100ms
@@ -104,7 +114,7 @@ byte screenType = UPDATE_STATE;
 char screenBuffer[10];
 
 byte pMaxVal = PMAX_DEFAULT;
-byte fRespi = FRESPI_DEFAULT;
+unsigned long fRespi = FRESPI_DEFAULT;
 int  vTidal = VTIDAL_DEFAULT;
 byte inExpRate = IERATE_DEFAULT;
 byte startStopState;
@@ -118,6 +128,273 @@ byte sPrevPtr = 0;
 long sPressureSum; 
 int sLowPower = 1;
 bool wasPeak=false, isPeak=false;
+
+//////// Motor states
+// Breath parameters
+unsigned long TCT;// = 5 * 1000000;    // Total cycle time [µs]
+unsigned long Ti;// = 2.5 * 1000000;     // Inspiration time [µs]
+
+unsigned long Te;// = TCT - Ti;          // Expiration time [µs]
+unsigned long Te_practical;
+uint32_t T_home;// = 2*TCT;
+
+// Motor parameters
+const uint32_t m_steps = 16;                     // µsteps per step
+uint32_t n_steps ;//= 100;                    // total motor steps
+uint32_t tot_pulses ;//= n_steps * m_steps;   // total µsteps/pulses needed
+
+uint32_t plateau_pulses ;//= tot_pulses/20;
+uint32_t insp_pulses ;//= tot_pulses - plateau_pulses;
+uint32_t exp_pulses ;//= tot_pulses;
+
+const uint32_t pulses_home_final = m_steps * 70;   // amount of step to properly set the initial low point
+const uint32_t pulses_full_range = 800 * m_steps;   // total µsteps/pulses needed
+
+// Pulse periods
+unsigned long T_pulse_insp;// = Ti/tot_pulses;
+unsigned long T_pulse_plateau;// = Ti/(plateau_pulses*2);
+unsigned long T_pulse_exp;// = Te/tot_pulses;  
+uint32_t exp_wait_time ; //= Te - T_pulse_exp*exp_pulses;
+uint32_t T_pulse_home;// = T_home/pulses_full_range;
+
+/////// Motor setting configuration
+// TODO: fix dtype + update 
+uint32_t volume2steps(int v_Tidal){
+   return v_Tidal;
+}
+
+#define IERATE_1TO3          0 
+#define IERATE_1TO2          1
+#define IERATE_1TO15         2
+#define IERATE_1TO1          3
+#define IERATE_2TO1          4
+
+// Update state for motor control
+void config_motor_settings(){
+  // Update volume configuration
+  n_steps = volume2steps(vTidal);
+  tot_pulses = n_steps * m_steps;
+  plateau_pulses = tot_pulses/20;
+  insp_pulses = tot_pulses - plateau_pulses;
+  exp_pulses = tot_pulses;
+
+  // Update breathing frequency setting
+  // TODO: update type
+  TCT = 60000000 / fRespi;
+  T_home = 2*TCT;
+  T_pulse_home = T_home/pulses_full_range;
+
+  // Update I/E ratio
+  if(inExpRate==IERATE_1TO3){
+    Ti = TCT / 4;
+  } else if(inExpRate==IERATE_1TO2){
+    Ti = TCT / 3;
+  } else if(inExpRate==IERATE_1TO15){
+    Ti = TCT*10 / 25;
+  } else if(inExpRate==IERATE_1TO1){
+    Ti = TCT / 2;
+  } else if(inExpRate==IERATE_2TO1){
+    Ti = TCT*10 / 15;
+  }
+  Te = TCT - Ti;
+  Te_practical = Te/2;
+  
+  T_pulse_insp = Ti/tot_pulses;
+  T_pulse_plateau = Ti/(plateau_pulses*2);
+  T_pulse_exp = Te_practical/tot_pulses;
+  exp_wait_time = Te - T_pulse_exp*exp_pulses;
+
+  //Serial.println("Config");
+  //Serial.println(TCT);
+  //Serial.println(Ti);
+  //Serial.println(T_pulse_insp);
+  //Serial.println(Te);
+  //Serial.println(T_pulse_exp);
+  //Serial.println(tot_pulses);
+  //Serial.println("");
+  //Serial.println(tot_pulses);
+  
+}
+
+////// Low-level motor control /////
+uint32_t rem_steps;
+uint32_t half_step_dur; // us
+uint8_t step_level;
+uint32_t next_half_step;
+
+void poll_motor_ll(uint32_t curr_time) {
+    if (curr_time >= next_half_step) {
+        if (step_level == HIGH) {
+            digitalWrite(pin_MOTOR_STEP, LOW);
+            step_level = LOW;
+            next_half_step += half_step_dur;
+        } else if (rem_steps > 0) {
+            digitalWrite(pin_MOTOR_STEP, HIGH);
+            step_level = HIGH;
+            next_half_step += half_step_dur;
+            rem_steps -= 1;
+        }
+    }
+}
+
+void init_motor_ll() {
+    // Global variables
+    rem_steps = 0;
+    half_step_dur = 0;
+    step_level = 0;
+    next_half_step = 0;
+    // Setup pins
+    pinMode(pin_MOTOR_EN, OUTPUT);
+    pinMode(pin_MOTOR_DIR, OUTPUT);
+    pinMode(pin_MOTOR_STEP, OUTPUT);
+    disable_motor();
+    digitalWrite(pin_MOTOR_DIR,LOW);
+    digitalWrite(pin_MOTOR_STEP,LOW);
+}
+
+void enable_motor(void) {
+  digitalWrite(pin_MOTOR_EN, LOW);
+}
+
+void disable_motor(void) {
+  digitalWrite(pin_MOTOR_EN, HIGH);
+}
+
+void move_motor(uint32_t n_steps, uint32_t step_dur, uint32_t dir, uint32_t curr_time) {
+  digitalWrite(pin_MOTOR_DIR, dir);
+  rem_steps = n_steps;
+  half_step_dur = step_dur/2;
+  next_half_step = curr_time;
+  Serial.println(step_dur);
+}
+
+bool motor_moving() {
+    return rem_steps != 0;
+}
+
+void stop_motor(void) {
+    rem_steps = 0;
+}
+
+//////////// High-level motor control //////////////
+typedef enum {
+    INIT,
+    INSP,
+    PLATEAU,
+    EXP_MOVE,
+    EXP_WAIT,
+    WAIT,
+    HOME_FIRST,
+    HOME_SEC,
+    HOME_UP,
+    HOME_FINAL,
+    PAUSE,
+    FAIL
+    } motor_state;
+motor_state motor_hl_st;
+
+uint32_t exp_end_time;
+
+const motor_state post_home_st = EXP_WAIT; // will start INSP
+
+void init_motor_hl(void) {
+    motor_hl_st = INIT;
+    // end-couse switches
+    pinMode(pin_MOTOR_ECS_UP, INPUT_PULLUP);
+    pinMode(pin_MOTOR_ECS_DOWN, INPUT_PULLUP);
+}
+
+void poll_motor_hl(uint32_t curr_time) {
+    if (startStopState!=1) {
+        motor_hl_st = INIT;
+        disable_motor();
+    }
+    switch (motor_hl_st) {
+        case INIT:
+        // TODO check for another condition
+            if (startStopState==1) {
+                enable_motor();
+                motor_hl_st = HOME_FIRST;
+                config_motor_settings();
+            }
+            break;
+
+        case HOME_FIRST:
+                move_motor(2*pulses_full_range, T_pulse_home, INSP_DIR, curr_time);
+                motor_hl_st = HOME_SEC;
+                break;
+
+        case HOME_SEC:
+            if (!motor_moving()) {
+                motor_hl_st = FAIL;
+            } else if (digitalRead(pin_MOTOR_ECS_DOWN) == HIGH) {
+                // rope in correct state for down -> moving up
+                move_motor(pulses_full_range, T_pulse_home, EXP_DIR, curr_time);
+                motor_hl_st = HOME_UP;
+            } else if (digitalRead(pin_MOTOR_ECS_UP) == HIGH) {
+                // rope unrolled, wait for it to be rolled
+            }
+            break;
+
+        case HOME_UP:
+            if (!motor_moving()) {
+                motor_hl_st = FAIL;
+            } else if (digitalRead(pin_MOTOR_ECS_UP) == HIGH) {
+                motor_hl_st = HOME_FINAL;
+                move_motor(pulses_home_final, T_pulse_home, INSP_DIR, curr_time);
+            }
+            break;
+        case HOME_FINAL:
+            if ((digitalRead(pin_MOTOR_ECS_UP) == LOW) && !motor_moving()){
+              motor_hl_st = post_home_st;            
+            }
+            break;
+
+        case INSP:
+            if (!motor_moving() || digitalRead(pin_MOTOR_ECS_DOWN) == HIGH) {
+                move_motor(plateau_pulses, T_pulse_plateau, INSP_DIR, curr_time);
+                motor_hl_st = PLATEAU;
+            }
+            break;
+
+        case PLATEAU:
+            if (!motor_moving() || digitalRead(pin_MOTOR_ECS_DOWN) == HIGH) {
+                move_motor(exp_pulses, T_pulse_exp, EXP_DIR, curr_time);
+                motor_hl_st = EXP_MOVE;
+            }
+            break;
+
+        case EXP_MOVE:
+            if (!motor_moving() || digitalRead(pin_MOTOR_ECS_UP) == HIGH) {
+                stop_motor();
+                disable_motor();
+                motor_hl_st = EXP_WAIT;
+                exp_end_time = curr_time + exp_wait_time;
+            }
+            break;
+
+        case EXP_WAIT:
+            if (curr_time >= exp_end_time) {
+                config_motor_settings();
+                enable_motor();
+                move_motor(insp_pulses, T_pulse_insp, INSP_DIR, curr_time);
+                motor_hl_st = INSP;
+            }
+            break;
+
+        case WAIT:
+            // To be implemented, waiting phase at the end of the expiration phase to spare the motor a bit
+            break;
+
+        case PAUSE:
+            disable_motor();
+            break;
+
+        case FAIL:
+        // to be implemented
+            break;
+    }
+}
 
 /*
    MPX5010DP (http://www.farnell.com/datasheets/2097509.pdf)
@@ -156,6 +433,8 @@ void setup()
 
   //digitalWrite(gatePin,HIGH);
 
+  Serial.begin(9600);
+
   lcd.begin(16, 2);
   lcd.setCursor(0,0);
   lcd.print("Breath for Life");
@@ -172,6 +451,10 @@ void setup()
   tInAlarm = micros();
   tAbsAlarm = micros();
   set_interface();
+
+  // Init motor states
+  init_motor_ll();
+  init_motor_hl();
   
 }
 
@@ -377,6 +660,10 @@ void loop()
       }
   }
 
+  // MOTOR driving
+  //config_motor_settings();
+  poll_motor_ll(currTime);
+  poll_motor_hl(currTime);
 
 }
 

@@ -30,15 +30,20 @@ const uint32_t T_home = 2*TCT;
 
 // Motor parameters
 const uint32_t m_steps = 16;                     // µsteps per step
-const uint32_t n_steps = 100;                    // total motor steps
-const uint32_t tot_pulses = n_steps * m_steps;   // total µsteps/pulses needed
-const uint32_t pulses_home_final = m_steps * 50;   // amount of step to properly set the initial low point
+const uint32_t n_steps = 500;                    // total motor steps
 
+uint32_t plateau_pulses;
+uint32_t insp_pulses;
+uint32_t exp_pulses;
+
+const uint32_t pulses_home_final = m_steps * 10;   // amount of step to properly set the initial low point
 const uint32_t pulses_full_range = 1000 * m_steps;   // total µsteps/pulses needed
 
 // Pulse periods
-unsigned long T_pulse_insp = Ti/tot_pulses;
-unsigned long T_pulse_exp = Te/tot_pulses;  
+unsigned long T_pulse_insp;
+unsigned long T_pulse_plateau;
+unsigned long T_pulse_exp = 1000000/(m_steps*500);
+uint32_t exp_wait_time;
 uint32_t T_pulse_home = T_home/pulses_full_range;
 
 
@@ -48,6 +53,16 @@ uint32_t pulses_nb[] = {350, 350, 350, 350, 400, 450, 500, 550, 600, 650, 700, 7
 uint32_t pulses_offset = 0;
 uint32_t nb_breathings = sizeof(pulses_nb)/sizeof(pulses_nb[0]);
 
+void set_breath_params(uint32_t amplitude) {
+    plateau_pulses = amplitude/30;
+    insp_pulses = amplitude - plateau_pulses;
+    exp_pulses = amplitude;
+    uint32_t t_plateau = Ti/10;
+    uint32_t t_insp = Ti - t_plateau;
+    T_pulse_insp = t_insp/insp_pulses;
+    T_pulse_plateau = t_plateau/plateau_pulses;
+    exp_wait_time = Te - T_pulse_exp*exp_pulses;
+}
 
 //////////// Low-level motor control //////////////
 uint32_t rem_steps;
@@ -105,15 +120,34 @@ void move_motor(uint32_t n_steps, uint32_t step_dur, uint32_t dir, uint32_t curr
 bool motor_moving() {
     return rem_steps != 0;
 }
+
+void stop_motor(void) {
+    rem_steps = 0;
+}
 ///////////////////////////////////////
 
 
 //////////// High-level motor control //////////////
 
-typedef enum {INIT, INSP, EXP, WAIT, HOME_FIRST, HOME_SEC, HOME_UP, HOME_FINAL, PAUSE, FAIL} motor_state;
+typedef enum {
+    INIT,
+    INSP,
+    PLATEAU,
+    EXP_MOVE,
+    EXP_WAIT,
+    WAIT,
+    HOME_FIRST,
+    HOME_SEC,
+    HOME_UP,
+    HOME_FINAL,
+    PAUSE,
+    FAIL
+    } motor_state;
 motor_state motor_hl_st;
 
-const motor_state post_home_st = EXP; // will start INSP
+uint32_t exp_end_time;
+
+const motor_state post_home_st = EXP_WAIT; // will start INSP
 
 void init_motor_hl(void) {
     motor_hl_st = INIT;
@@ -171,23 +205,42 @@ void poll_motor_hl(uint32_t curr_time) {
 
         case INSP:
             if (!motor_moving() || digitalRead(PIN_ECS_DOWN) == HIGH) {
-                move_motor(curr_pulses, Te/curr_pulses, EXP_DIR, curr_time);
-                motor_hl_st = EXP;
-                PRINTLN("start exp");
+                move_motor(plateau_pulses, T_pulse_plateau, INSP_DIR, curr_time);
+                motor_hl_st = PLATEAU;
+                PRINTLN("start plateau");
             }
             break;
 
-        case EXP:
+        case PLATEAU:
+            if (!motor_moving() || digitalRead(PIN_ECS_DOWN) == HIGH) {
+                move_motor(exp_pulses, T_pulse_exp, EXP_DIR, curr_time);
+                motor_hl_st = EXP_MOVE;
+                PRINTLN("start exp_move");
+            }
+            break;
+
+        case EXP_MOVE:
             if (!motor_moving() || digitalRead(PIN_ECS_UP) == HIGH) {
                 if (pulses_offset >= nb_breathings) {
                     motor_hl_st = FAIL;
                 } else {
-                    curr_pulses = m_steps*pulses_nb[pulses_offset];
-                    pulses_offset += 1;
-                    move_motor(curr_pulses, Ti/curr_pulses, INSP_DIR, curr_time);
-                    motor_hl_st = INSP;
-                    PRINTLN("start insp");
+                    stop_motor();
+                    disable_motor();
+                    motor_hl_st = EXP_WAIT;
+                    exp_end_time = curr_time + exp_wait_time;
+                    PRINTLN("start exp_wait");
                 }
+            }
+            break;
+
+        case EXP_WAIT:
+            if (curr_time >= exp_end_time) {
+                set_breath_params(m_steps*pulses_nb[pulses_offset]);
+                pulses_offset += 1;
+                enable_motor();
+                move_motor(insp_pulses, T_pulse_insp, INSP_DIR, curr_time);
+                motor_hl_st = INSP;
+                PRINTLN("start insp");
             }
             break;
 
