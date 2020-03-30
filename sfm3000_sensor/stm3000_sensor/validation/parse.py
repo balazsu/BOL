@@ -47,7 +47,7 @@ def parse(filename):
         N = int(T_acq/T_s) + 1
 
         # Initialize raw data vector
-        data = np.zeros((N, 2))
+        data = np.zeros((N, 6))
 
         # Skip blank line and '[Data]'
         next(raw)

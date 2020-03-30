@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from parse import parse
 
 def main():
-    # Data from Flowlab
+    # Data from Flowla
     date, title, notes, labels, data_citrex = \
     parse("data/vol-mes-distanced-short-tube.log")
     #parse("data/vol-mes-at-ambubag-long-tube-citrex.log")
