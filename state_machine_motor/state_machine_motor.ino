@@ -5,6 +5,7 @@
 #define PIN_PAUSE 3
 #define PIN_ECS_UP 8
 #define PIN_ECS_DOWN 9
+#define PIN_ERR 10 
 
 // TO DO: check correct directions for inspiration/expirations phases
 #define INSP_DIR HIGH
@@ -22,15 +23,15 @@
 
 
 // Breath parameters
-const unsigned long TCT = 5 * 1000000;    // Total cycle time [µs]
-const unsigned long Ti = 2.5 * 1000000;     // Inspiration time [µs]
+const unsigned long TCT = 3 * 1000000UL;    // Total cycle time [µs]
+const unsigned long Ti = 15 * 100000UL;     // Inspiration time [µs]
 
 const unsigned long Te = TCT - Ti;          // Expiration time [µs]
 const uint32_t T_home = 2*TCT;
 
 // Motor parameters
 const uint32_t m_steps = 16;                     // µsteps per step
-const uint32_t n_steps = 500;                    // total motor steps
+const uint32_t n_steps = 800;                    // total motor steps
 const uint32_t tot_pulses = n_steps * m_steps;   // total µsteps/pulses needed
 
 const uint32_t plateau_pulses = tot_pulses/20;
@@ -38,7 +39,7 @@ const uint32_t insp_pulses = tot_pulses - plateau_pulses;
 const uint32_t exp_pulses = tot_pulses;
 
 const uint32_t pulses_home_final = m_steps * 50;   // amount of step to properly set the initial low point
-const uint32_t pulses_full_range = 800 * m_steps;   // total µsteps/pulses needed
+const uint32_t pulses_full_range = 1200 * m_steps;   // total µsteps/pulses needed
 
 // Pulse periods
 unsigned long T_pulse_insp = Ti/(insp_pulses*2);
@@ -138,6 +139,7 @@ void init_motor_hl(void) {
     // end-couse switches
     pinMode(PIN_ECS_UP, INPUT_PULLUP);
     pinMode(PIN_ECS_DOWN, INPUT_PULLUP);
+    pinMode(PIN_ERR, INPUT);
 }
 
 void poll_motor_hl(uint32_t curr_time) {
@@ -203,6 +205,8 @@ void poll_motor_hl(uint32_t curr_time) {
         case EXP_MOVE:
             if (!motor_moving() || digitalRead(PIN_ECS_UP) == HIGH) {
                 stop_motor();
+                PRINT("err pin ");
+                PRINTLN(digitalRead(PIN_ERR));
                 disable_motor();
                 motor_hl_st = EXP_WAIT;
                 exp_end_time = curr_time + exp_wait_time;
