@@ -7,6 +7,8 @@
 //        Many improvements are possible
 //        Not yet fully tested
 //
+//        Add a 100 ohms damping resistor between PWM output and Step input of Motor drive
+//
 //
 // Author:  Guerric Meurice de Dormale <gm@bitandbyte.io>
 //
@@ -237,8 +239,8 @@ void set_motor_goto_position(const unsigned long position, const unsigned int sp
 void loop()
 {
 
-  unsigned int motor_speed = 500; // Max TIM1_FREQ_DIV_FACTOR/2
-  unsigned int motor_target_pos = 1;
+  unsigned int motor_speed = 2000; // Max TIM1_FREQ_DIV_FACTOR/2
+  unsigned long motor_target_pos = 1000;
 
 
   while(1) {
