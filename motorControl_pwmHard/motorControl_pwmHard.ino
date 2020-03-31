@@ -24,7 +24,9 @@
 #define MOTORCTRL_DRIVE_ENBL_TRUE 0
 #define MOTORCTRL_DRIVE_ENBL_FALSE 1
 
-//#define MOTORCTRL_STEP_CNT_IRQ TIMER5_CAPT_vect
+#define MOTORCTRL_PWM_RUN_VALUE _BV(CS12)
+
+#define MOTORCTRL_STEP_CNT_IRQ TIMER5_COMPA_vect
 
 const byte MOTORCTRL_DRIVE_DIR_PIN = 22;
 const byte MOTORCTRL_DRIVE_STEP_PIN = 12; // PWM1 outputB
@@ -45,25 +47,43 @@ static volatile int  motor_step_cnt_incr = 0;
 void setup_pwm1()
 {
   cli();//stop interrupts
+  TCCR1A = 0;
+  TCCR1B = 0;
 
-  // PWM
-  pinMode(MOTORCTRL_DRIVE_STEP_PIN, OUTPUT); // A
   // WGM mode 9 (PWM, Phase and Frequency Correct - OCRn)
   // pre-scaler: div-256
   // OCR1A fixes the period
   // OCR1B fixes duty cycle
-  TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(WGM10) | _BV(COM1B0);
-  TCCR1B = _BV(CS12) | _BV(WGM13);
   // 3 is the minimum period for the timer
   // setting OCR1B = OCR1A guarantees 0 output
   // setting a low period minimizes turn-on latency.
   OCR1A = 3;
   OCR1B = UINT_MAX;
+  // WGM mode 9 (PWM, Phase and Frequency Correct - OCRn)
+  // pre-scaler: div-256
+  // OCR1A fixes the period
+  // OCR1B fixes duty cycle
+  TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(COM1B0) | _BV(WGM10);
+  TCCR1B |= _BV(WGM13);
+
+  // Start
+  TCCR1B |= MOTORCTRL_PWM_RUN_VALUE;
+
+  pinMode(MOTORCTRL_DRIVE_STEP_PIN, OUTPUT);
 
   sei();//allow interrupts
 }
 
 
+void disable_cnt5_irq()
+{
+  TIMSK5 &= ~ _BV(OCIE5A);
+}
+
+void enable_cnt5_irq()
+{
+  TIMSK5 |= _BV(OCIE5A);
+}
 
 void setup_ext_cnt5()
 {
@@ -106,7 +126,12 @@ void setup()
 
 
 // Interrupt callback for Timer5 (step counter)
-ISR(TIMER5_COMPA_vect)
+ISR(MOTORCTRL_STEP_CNT_IRQ)
+{
+  irq_step_count_clbk();
+}
+
+void irq_step_count_clbk()
 {
   long remaining_distance;
 
@@ -121,7 +146,6 @@ ISR(TIMER5_COMPA_vect)
     {
       stop_pwm1();
       motor_inmotion = 0;
-      digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, 1);
     }
     else
     {
@@ -144,7 +168,6 @@ ISR(TIMER5_COMPA_vect)
     {
       stop_pwm1();
       motor_inmotion = 0;
-      digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, 1);
     }
     else
     {
@@ -169,12 +192,16 @@ void set_freq_pwm1(const unsigned int freq)
   // The updates to these values are sampled when the counter reaches zero,
   // hence the following instructions should happen atomically most of the
   // time.
-  // If the counter reaches zero between these instructions, then OCR1B==UINT_MAX
-  // guarantees the the output remains LOW, producing no glitches (since the
-  // output is always LOW when the counter is zero).
-  OCR1B = UINT_MAX;
+
+  cli();//stop interrupts
+  // Stop counter
+  TCCR1B &= ~MOTORCTRL_PWM_RUN_VALUE;
+  // Update TOP values
   OCR1A = timer1_period;
   OCR1B = timer1_period/2;
+  // Start counter
+  TCCR1B |= MOTORCTRL_PWM_RUN_VALUE;
+  sei();//allow interrupts
 }
 
 // Maximum input freq is TIM1_FREQ_DIV_FACTOR/2
@@ -185,8 +212,14 @@ void stop_pwm1()
   // setting OCR1B = OCR1A guarantees 0 output
   // setting a low period minimizes turn-on latency.
   // We first set OCR1B to UINT_MAX to guarantee absence of glitches.
-  OCR1B = UINT_MAX;
+
+  // Stop counter
+  TCCR1B &= ~MOTORCTRL_PWM_RUN_VALUE;
+  // Update TOP values to minimum
+  OCR1B = 3;
   OCR1A = 3;
+  // Start counter
+  TCCR1B |= MOTORCTRL_PWM_RUN_VALUE;
   sei();//allow interrupts
 }
 
@@ -254,6 +287,8 @@ void set_motor_goto_position(const unsigned long position, const unsigned int sp
       digitalWrite(MOTORCTRL_DRIVE_ENBL_PIN, MOTORCTRL_DRIVE_ENBL_TRUE);
       motor_inmotion = 1;
       set_freq_pwm1(speed);
+      // Verify delay between set_freq_pwm1() and real start of PWM.
+      digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, 1);
     }
     else
     {
@@ -280,12 +315,6 @@ void loop()
       motor_target_pos = 0;
     }
 
-    for (int i = 0; i<20; i++)
-    {
-      Serial.print("Motor position: ");
-      Serial.println(motor_position);
-      delay(50);
-    }
     while (motor_inmotion)
     {
         delay(100);
