@@ -24,7 +24,7 @@
 //#define MOTORCTRL_STEP_CNT_IRQ TIMER5_CAPT_vect
 
 const byte MOTORCTRL_DRIVE_DIR_PIN = 22;
-const byte MOTORCTRL_DRIVE_STEP_PIN = 11; // PWM1 outputA
+const byte MOTORCTRL_DRIVE_STEP_PIN = 12; // PWM1 outputB
 const byte MOTORCTRL_DRIVE_ENBL_PIN = 24;
 
 const byte MOTORCTRL_STEP_CNT_PIN = 47; // CNT5 input
@@ -39,19 +39,23 @@ static volatile byte motor_direction = 0;
 static volatile byte motor_inmotion = 0;
 static volatile int  motor_step_cnt_incr = 0;
 
-
 void setup_pwm1()
 {
   cli();//stop interrupts
 
   // PWM
   pinMode(MOTORCTRL_DRIVE_STEP_PIN, OUTPUT); // A
-  // WGM mode 8 (PWM, Phase and Frequency Correct - ICRn)
-  TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(COM1B0);
+  // WGM mode 9 (PWM, Phase and Frequency Correct - OCRn)
   // pre-scaler: div-256
+  // OCR1A fixes the period
+  // OCR1B fixes duty cycle
+  TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(WGM10) | _BV(COM1B0);
   TCCR1B = _BV(CS12) | _BV(WGM13);
-  ICR1 = 0;
-  OCR1A = 0;
+  // 3 is the minimum period for the timer
+  // setting OCR1B = OCR1A guarantees 0 output
+  // setting a low period minimizes turn-on latency.
+  OCR1A = 3;
+  OCR1B = UINT_MAX;
 
   sei();//allow interrupts
 }
@@ -64,13 +68,13 @@ void setup_ext_cnt5()
 
   // Counter for PWM output
   pinMode(MOTORCTRL_STEP_CNT_PIN, INPUT);
-  // WGM mode 12 (CTC - ICRn)
-  TCCR5A = 0;
-  // External falling-edge clock
+  // WGM mode 4 (CTC - OCRn)
+  // External rising-edge clock
   // ? add ICNC5 ?
-  TCCR5B = _BV(CS52) | _BV(CS51) | _BV(WGM53) | _BV(WGM52);
-  ICR5 = TIM1_FREQ_DIV_FACTOR; // By default
-  TIMSK5 = _BV(ICIE5);
+  TCCR5A = 0;
+  TCCR5B = _BV(CS52) | _BV(CS51) | _BV(CS50) | _BV(WGM52);
+  OCR5A = TIM1_FREQ_DIV_FACTOR; // By default
+  TIMSK5 = _BV(OCIE5A);
 
   sei();//allow interrupts
 }
@@ -99,7 +103,7 @@ void setup()
 
 
 // Interrupt callback for Timer5 (step counter)
-ISR(TIMER5_CAPT_vect)
+ISR(TIMER5_COMPA_vect)
 {
   long remaining_distance;
 
@@ -156,19 +160,29 @@ ISR(TIMER5_CAPT_vect)
 // Maximum input freq is TIM1_FREQ_DIV_FACTOR/2
 void set_freq_pwm1(const unsigned int freq)
 {
-  // Should wait for prescaler allignment (to avoid generating a very short first pulse)
   unsigned int timer1_period;
   timer1_period = TIM1_FREQ_DIV_FACTOR / freq;
-  ICR1 = timer1_period;
-  OCR1A = timer1_period/2;
+  // The updates to these values are sampled when the counter reaches zero,
+  // hence the following instructions should happen atomically most of the
+  // time.
+  // If the counter reaches zero between these instructions, then OCR1B==UINT_MAX
+  // guarantees the the output remains LOW, producing no glitches (since the
+  // output is always LOW when the counter is zero).
+  OCR1B = UINT_MAX;
+  OCR1A = timer1_period;
+  OCR1B = timer1_period/2;
 }
 
 // Maximum input freq is TIM1_FREQ_DIV_FACTOR/2
 void stop_pwm1()
 {
   cli();//stop interrupts
-  ICR1 = 0;
-  OCR1A = 0;
+  // 3 is the minimum period for the timer
+  // setting OCR1B = OCR1A guarantees 0 output
+  // setting a low period minimizes turn-on latency.
+  // We first set OCR1B to UINT_MAX to guarantee absence of glitches.
+  OCR1B = UINT_MAX;
+  OCR1A = 3;
   sei();//allow interrupts
 }
 
@@ -176,7 +190,7 @@ void stop_pwm1()
 void set_threshold_cnt5(const unsigned int thresh)
 {
   motor_step_cnt_incr = thresh;
-  ICR5 = thresh;
+  OCR5A= thresh-1;
 }
 
 void reset_cnt5()
@@ -223,8 +237,8 @@ void set_motor_goto_position(const unsigned long position, const unsigned int sp
       }
 
       digitalWrite(MOTORCTRL_DRIVE_ENBL_PIN, MOTORCTRL_DRIVE_ENBL_TRUE);
-      set_freq_pwm1(speed);
       motor_inmotion = 1;
+      set_freq_pwm1(speed);
     }
     else
     {
@@ -238,19 +252,25 @@ void loop()
 {
 
   unsigned int motor_speed = 500; // Max TIM1_FREQ_DIV_FACTOR/2
-  unsigned int motor_target_pos = 1;
+  unsigned int motor_target_pos = 2;
 
 
   while(1) {
     //digitalWrite(MOTORCTRL_DIR_PIN, 1);
 
     set_motor_goto_position(motor_target_pos, motor_speed);
+    motor_target_pos +=2;
+    
     for (int i = 0; i<20; i++)
     {
       Serial.print("Motor position: ");
       Serial.println(motor_position);
-      delay(500);
+      delay(50);
     }
-    delay(10000);
+    while (motor_inmotion)
+    {
+        delay(100);
+    }
+    delay(2000);
   }
 }
