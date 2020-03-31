@@ -11,6 +11,7 @@
 //
 //
 // Author:  Guerric Meurice de Dormale <gm@bitandbyte.io>
+//          Gaetan Cassiers <gaetan.cassiers@uclouvain.be>
 //
 //
 ////////////////////////////////////////////////////////////////////////////////
@@ -138,6 +139,7 @@ ISR(TIMER5_COMPA_vect)
   else
   {
     motor_position -= get_cnt5();
+    motor_position -= motor_step_cnt_incr;
     if (motor_position <= motor_target_position)
     {
       stop_pwm1();
@@ -188,11 +190,12 @@ void stop_pwm1()
   sei();//allow interrupts
 }
 
-// Maximum input threshold is FIXME
+// Maximum input threshold is UINT_MAX
 void set_threshold_cnt5(const unsigned int thresh)
 {
   motor_step_cnt_incr = thresh;
-  OCR5A= thresh-1;
+  // Counter interrupt is off by one, so need to adapt threshold value
+  OCR5A = thresh-1;
 }
 
 void reset_cnt5()
@@ -218,11 +221,21 @@ void set_motor_goto_position(const unsigned long position, const unsigned int sp
     if (remaining_distance >= 0)
     {
       motor_direction = MOTORCTRL_DIR_FORWARD;
+      if (remaining_distance == 1) // Special case: counter config is problematic in that case
+      {
+        motor_target_position += 1;
+        remaining_distance = 2; // Will go a little bit too far
+      }
     }
     else
     {
       motor_direction = MOTORCTRL_DIR_BACKWARD;
       remaining_distance = -remaining_distance;
+      if (remaining_distance == 1) // Special case: counter config is problematic in that case
+      {
+        motor_target_position -= 1;
+        remaining_distance = 2; // Will go a little bit too far
+      }
     }
 
     digitalWrite(MOTORCTRL_DRIVE_DIR_PIN, motor_direction);
@@ -253,16 +266,20 @@ void set_motor_goto_position(const unsigned long position, const unsigned int sp
 void loop()
 {
 
-  unsigned int motor_speed = 2000; // Max TIM1_FREQ_DIV_FACTOR/2
-  unsigned long motor_target_pos = 1000;
+  unsigned int motor_speed = 50; // Max TIM1_FREQ_DIV_FACTOR/2
+  unsigned long motor_target_pos = 10;
+  unsigned long motor_target_pos_limit = 20;
 
 
   while(1) {
-    //digitalWrite(MOTORCTRL_DIR_PIN, 1);
 
     set_motor_goto_position(motor_target_pos, motor_speed);
-    motor_target_pos +=2;
-    
+    motor_target_pos +=4;
+    if (motor_target_pos > motor_target_pos_limit)
+    {
+      motor_target_pos = 0;
+    }
+
     for (int i = 0; i<20; i++)
     {
       Serial.print("Motor position: ");
@@ -273,6 +290,5 @@ void loop()
     {
         delay(100);
     }
-    delay(2000);
   }
 }
