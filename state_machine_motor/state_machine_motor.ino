@@ -49,7 +49,7 @@ uint32_t T_pulse_home = T_home/pulses_full_range;
 
 uint32_t curr_pulses;
 
-uint32_t pulses_nb[] = {350, 350, 350, 350, 400, 450, 500, 550, 600, 650, 700, 750};
+uint32_t pulses_nb[] = {350, 350, 350, 350, 400, 450, 500, 550, 600, 650, 700};
 uint32_t pulses_offset = 0;
 uint32_t nb_breathings = sizeof(pulses_nb)/sizeof(pulses_nb[0]);
 
