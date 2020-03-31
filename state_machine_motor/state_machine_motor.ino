@@ -1,6 +1,6 @@
-#define PIN_EN 5
-#define PIN_DIR 6
-#define PIN_STEP 7
+#define PIN_EN 3
+#define PIN_DIR 4
+#define PIN_STEP 5
 #define PIN_START 2
 #define PIN_PAUSE 3
 #define PIN_ECS_UP 8
@@ -31,7 +31,7 @@ const uint32_t T_home = 2*TCT;
 
 // Motor parameters
 const uint32_t m_steps = 16;                     // µsteps per step
-const uint32_t n_steps = 800;                    // total motor steps
+const uint32_t n_steps = 600;                    // total motor steps
 const uint32_t tot_pulses = n_steps * m_steps;   // total µsteps/pulses needed
 
 const uint32_t plateau_pulses = tot_pulses/20;
@@ -139,12 +139,15 @@ void init_motor_hl(void) {
     // end-couse switches
     pinMode(PIN_ECS_UP, INPUT_PULLUP);
     pinMode(PIN_ECS_DOWN, INPUT_PULLUP);
+    pinMode(PIN_START,INPUT_PULLUP);
+    pinMode(PIN_PAUSE,INPUT_PULLUP);
     pinMode(PIN_ERR, INPUT);
 }
 
 void poll_motor_hl(uint32_t curr_time) {
     if (digitalRead(PIN_PAUSE) == LOW) {
         motor_hl_st = INIT;
+        disable_motor();
     }
     switch (motor_hl_st) {
         case INIT:
