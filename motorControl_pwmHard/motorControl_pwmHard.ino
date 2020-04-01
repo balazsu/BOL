@@ -27,9 +27,9 @@
 #define MOTORCTRL_DRIVE_ENBL_TRUE 0
 #define MOTORCTRL_DRIVE_ENBL_FALSE 1
 
-#define MOTORCTRL_PWM_RUN_VALUE _BV(CS12)
-#define MOTORCTRL_PWM_OVF_IRQ_CFG _BV(TOIE1) 
-#define MOTORCTRL_PWM_OVF_IRQ TIMER1_OVF_vect
+#define MOTORCTRL_PWM_RUN_VALUE _BV(CS32)
+#define MOTORCTRL_PWM_OVF_IRQ_CFG _BV(TOIE3)
+#define MOTORCTRL_PWM_OVF_IRQ TIMER3_OVF_vect
 
 #define MOTORCTRL_STEP_CNT_IRQ TIMER5_COMPA_vect
 
@@ -46,7 +46,7 @@
 
 #ifdef ARDUINO_RT
 const uint8_t MOTORCTRL_DRIVE_DIR_PIN = 22;
-const uint8_t MOTORCTRL_DRIVE_STEP_PIN = 12; // pwm_step outputB
+const uint8_t MOTORCTRL_DRIVE_STEP_PIN = 2; // pwm_step (OC3B)
 const uint8_t MOTORCTRL_DRIVE_ENBL_PIN = 24;
 
 const uint8_t MOTORCTRL_STEP_CNT_PIN = 47; // CNT5 input
@@ -77,33 +77,34 @@ static unsigned int get_cnt5();
 static void setup_pwm_step()
 {
   cli();//stop interrupts
-  TCCR1A = 0;
-  TCCR1B = 0;
+  TCCR3A = 0;
+  TCCR3B = 0;
 
   // WGM mode 9 (PWM, Phase and Frequency Correct - OCRn)
   // pre-scaler: div-256
-  // OCR1A fixes the period
-  // OCR1B fixes duty cycle
+  // OCR3A fixes the period
+  // OCR3B fixes duty cycle
   // 3 is the minimum period for the timer
-  // setting OCR1B = OCR1A guarantees 0 output
+  // setting OCR3B = OCR3A guarantees 0 output
   // setting a low period minimizes turn-on latency.
-  OCR1A = 3;
-  OCR1B = COUNTER1_MAX;
+  OCR3A = 3;
+  OCR3B = COUNTER_STEP_MAX;
   // WGM mode 9 (PWM, Phase and Frequency Correct - OCRn)
   // pre-scaler: div-256
-  // OCR1A fixes the period
-  // OCR1B fixes duty cycle
-  TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(COM1B0) | _BV(WGM10);
-  TCCR1B |= _BV(WGM13);
+  // OCR3A fixes the period
+  // OCR3B fixes duty cycle
+  TCCR3A = _BV(COM3A0) | _BV(COM3B1) | _BV(COM3B0) | _BV(WGM30);
+  TCCR3B |= _BV(WGM33);
 
   // Start
-  TCCR1B |= MOTORCTRL_PWM_RUN_VALUE;
+  TCCR3B |= MOTORCTRL_PWM_RUN_VALUE;
 
   // Disable interrupts
-  TIMSK1 = 0;
+  TIMSK3 = 0;
 
 #ifdef ARDUINO_RT
   pinMode(MOTORCTRL_DRIVE_STEP_PIN, OUTPUT);
+  //pinMode(5, OUTPUT); // to debug PWM, always duty cycle 1/2
 #else
   dio_init(DIO_PIN_MOTOR_STEP, DIO_OUTPUT);
 #endif // ARDUINO_RT
@@ -202,13 +203,13 @@ static void irq_step_count_clbk()
     else
     {
       remaining_distance = motor_target_position - motor_position;
-      if (remaining_distance <= COUNTER1_MAX)
+      if (remaining_distance <= COUNTER_STEP_MAX)
       {
         set_threshold_cnt5(remaining_distance);
       }
       else
       {
-        set_threshold_cnt5(COUNTER1_MAX);
+        set_threshold_cnt5(COUNTER_STEP_MAX);
       }
     }
   }
@@ -223,13 +224,13 @@ static void irq_step_count_clbk()
     else
     {
       remaining_distance = motor_position - motor_target_position;
-      if (remaining_distance <= COUNTER1_MAX)
+      if (remaining_distance <= COUNTER_STEP_MAX)
       {
         set_threshold_cnt5(remaining_distance);
       }
       else
       {
-        set_threshold_cnt5(COUNTER1_MAX);
+        set_threshold_cnt5(COUNTER_STEP_MAX);
       }
     }
   }
@@ -246,12 +247,12 @@ static void set_freq_pwm_step(const unsigned int freq)
 
   cli();//stop interrupts
   // Stop counter
-  TCCR1B &= ~MOTORCTRL_PWM_RUN_VALUE;
+  TCCR3B &= ~MOTORCTRL_PWM_RUN_VALUE;
   // Update TOP values
-  OCR1A = timer1_period;
-  OCR1B = timer1_period/2;
+  OCR3A = timer1_period;
+  OCR3B = timer1_period/2;
   // Start counter
-  TCCR1B |= MOTORCTRL_PWM_RUN_VALUE;
+  TCCR3B |= MOTORCTRL_PWM_RUN_VALUE;
   sei();//allow interrupts
 }
 
@@ -260,20 +261,20 @@ static void stop_pwm_step()
 {
   cli();//stop interrupts
   // 3 is the minimum period for the timer
-  // setting OCR1B = OCR1A guarantees 0 output
+  // setting OCR3B = OCR3A guarantees 0 output
   // setting a low period minimizes turn-on latency.
-  // We first set OCR1B to COUNTER1_MAX to guarantee absence of glitches.
+  // We first set OCR3B to COUNTER_STEP_MAX to guarantee absence of glitches.
 
   // Stop counter
-  TCCR1B &= ~MOTORCTRL_PWM_RUN_VALUE;
+  TCCR3B &= ~MOTORCTRL_PWM_RUN_VALUE;
   // Update TOP values to minimum
-  OCR1B = 3;
-  OCR1A = 3;  
+  OCR3B = 3;
+  OCR3A = 3;  
   // Enable overflow interrupt (end of operations)
-  TIFR1 |= _BV(TOV1); // Clear pending interrupt flag (if any)
-  TIMSK1 |= MOTORCTRL_PWM_OVF_IRQ_CFG;
+  TIFR3 |= _BV(TOV3); // Clear pending interrupt flag (if any)
+  TIMSK3 |= MOTORCTRL_PWM_OVF_IRQ_CFG;
   // Start counter
-  TCCR1B |= MOTORCTRL_PWM_RUN_VALUE;
+  TCCR3B |= MOTORCTRL_PWM_RUN_VALUE;
   sei();//allow interrupts
 }
 
@@ -282,12 +283,12 @@ ISR(MOTORCTRL_PWM_OVF_IRQ)
 {
   //digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, 1);
   // Disable overflow interrupt
-  TIMSK1 &= ~ MOTORCTRL_PWM_OVF_IRQ_CFG;
+  TIMSK3 &= ~ MOTORCTRL_PWM_OVF_IRQ_CFG;
   // Report that motor is not in motion anymore
   motor_inmotion = 0;
 }
 
-// Maximum input threshold is COUNTER1_MAX
+// Maximum input threshold is COUNTER_STEP_MAX
 static void set_threshold_cnt5(const unsigned int thresh)
 {
   motor_step_cnt_incr = thresh;
@@ -362,13 +363,13 @@ void set_motor_goto_position(const unsigned long position, const unsigned int sp
 
     if (remaining_distance > 0)
     {
-      if (remaining_distance <= COUNTER1_MAX)
+      if (remaining_distance <= COUNTER_STEP_MAX)
       {
         set_threshold_cnt5(remaining_distance);
       }
       else
       {
-        set_threshold_cnt5(COUNTER1_MAX);
+        set_threshold_cnt5(COUNTER_STEP_MAX);
       }
 
 #ifdef ARDUINO_RT
