@@ -25,6 +25,8 @@
 #define MOTORCTRL_DRIVE_ENBL_FALSE 1
 
 #define MOTORCTRL_PWM_RUN_VALUE _BV(CS12)
+#define MOTORCTRL_PWM_OVF_IRQ_CFG _BV(TOIE1) 
+#define MOTORCTRL_PWM_OVF_IRQ TIMER1_OVF_vect
 
 #define MOTORCTRL_STEP_CNT_IRQ TIMER5_COMPA_vect
 
@@ -34,6 +36,7 @@ const byte MOTORCTRL_DRIVE_ENBL_PIN = 24;
 
 const byte MOTORCTRL_STEP_CNT_PIN = 47; // CNT5 input
 const byte MOTORCTRL_STEP_CNT_OUT_DBG_PIN = 25;
+const byte MOTORCTRL_STEP_CNT_OUT_DBG_PIN2 = 27;
 
 const unsigned int TIM1_FREQ_DIV_FACTOR = 31250;
 
@@ -42,7 +45,7 @@ static volatile long motor_position = 0;
 static volatile long motor_target_position = 0;
 static volatile byte motor_direction = 0;
 static volatile byte motor_inmotion = 0;
-static volatile int  motor_step_cnt_incr = 0;
+static volatile int  motor_step_cnt_incr = 0; 
 
 void setup_pwm1()
 {
@@ -68,6 +71,9 @@ void setup_pwm1()
 
   // Start
   TCCR1B |= MOTORCTRL_PWM_RUN_VALUE;
+
+  // Disable interrupts
+  TIMSK1 = 0;
 
   pinMode(MOTORCTRL_DRIVE_STEP_PIN, OUTPUT);
 
@@ -109,10 +115,11 @@ void setup()
   setup_pwm1();
   setup_ext_cnt5();
 
-  //attachInterrupt(ICF5, step_cnt_cbf, RISING);
   pinMode(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, OUTPUT);
   digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, 0);
-
+  pinMode(MOTORCTRL_STEP_CNT_OUT_DBG_PIN2, OUTPUT);
+  digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN2, 0);
+  
   // TMC Dir pin
   pinMode(MOTORCTRL_DRIVE_DIR_PIN, OUTPUT);
   // TMC enable pin
@@ -145,7 +152,6 @@ void irq_step_count_clbk()
     if (motor_position >= motor_target_position)
     {
       stop_pwm1();
-      motor_inmotion = 0;
     }
     else
     {
@@ -167,7 +173,6 @@ void irq_step_count_clbk()
     if (motor_position <= motor_target_position)
     {
       stop_pwm1();
-      motor_inmotion = 0;
     }
     else
     {
@@ -217,10 +222,23 @@ void stop_pwm1()
   TCCR1B &= ~MOTORCTRL_PWM_RUN_VALUE;
   // Update TOP values to minimum
   OCR1B = 3;
-  OCR1A = 3;
+  OCR1A = 3;  
+  // Enable overflow interrupt (end of operations)
+  TIFR1 |= _BV(TOV1); // Clear pending interrupt flag (if any)
+  TIMSK1 |= MOTORCTRL_PWM_OVF_IRQ_CFG;
   // Start counter
   TCCR1B |= MOTORCTRL_PWM_RUN_VALUE;
   sei();//allow interrupts
+}
+
+// Interrupt callback for Timer1 (PWM overflow)
+ISR(MOTORCTRL_PWM_OVF_IRQ)
+{
+  //digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, 1);
+  // Disable overflow interrupt
+  TIMSK1 &= ~ MOTORCTRL_PWM_OVF_IRQ_CFG;
+  // Report that motor is not in motion anymore
+  motor_inmotion = 0;
 }
 
 // Maximum input threshold is UINT_MAX
@@ -288,12 +306,11 @@ void set_motor_goto_position(const unsigned long position, const unsigned int sp
       motor_inmotion = 1;
       set_freq_pwm1(speed);
       // Verify delay between set_freq_pwm1() and real start of PWM.
-      digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, 1);
+      //digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, 1);
     }
     else
     {
       digitalWrite(MOTORCTRL_DRIVE_ENBL_PIN, MOTORCTRL_DRIVE_ENBL_FALSE);
-      motor_inmotion = 0;
     }
   }
 }
@@ -301,10 +318,9 @@ void set_motor_goto_position(const unsigned long position, const unsigned int sp
 void loop()
 {
 
-  unsigned int motor_speed = 50; // Max TIM1_FREQ_DIV_FACTOR/2
+  unsigned int motor_speed = 1000; // Max TIM1_FREQ_DIV_FACTOR/2
   unsigned long motor_target_pos = 10;
   unsigned long motor_target_pos_limit = 20;
-
 
   while(1) {
 
