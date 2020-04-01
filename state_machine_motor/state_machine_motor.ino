@@ -59,7 +59,7 @@ uint8_t step_level;
 uint32_t next_half_step;
 
 void poll_motor_ll(uint32_t curr_time) {
-    if (curr_time >= next_half_step) {
+    if ((next_half_step-curr_time) & 0x80000000) {
         if (step_level == HIGH) {
             digitalWrite(PIN_STEP, LOW);
             step_level = LOW;
