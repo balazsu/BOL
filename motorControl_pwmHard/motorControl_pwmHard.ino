@@ -17,7 +17,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 
+#include <stdint.h>
 #include <limits.h>
+
+#include <avr/interrupt.h>
 
 #define MOTORCTRL_DIR_FORWARD 0
 #define MOTORCTRL_DIR_BACKWARD 1
@@ -30,24 +33,48 @@
 
 #define MOTORCTRL_STEP_CNT_IRQ TIMER5_COMPA_vect
 
-const byte MOTORCTRL_DRIVE_DIR_PIN = 22;
-const byte MOTORCTRL_DRIVE_STEP_PIN = 12; // PWM1 outputB
-const byte MOTORCTRL_DRIVE_ENBL_PIN = 24;
+#define COUNTER_STEP_MAX 0xFFFF
 
-const byte MOTORCTRL_STEP_CNT_PIN = 47; // CNT5 input
-const byte MOTORCTRL_STEP_CNT_OUT_DBG_PIN = 25;
-const byte MOTORCTRL_STEP_CNT_OUT_DBG_PIN2 = 27;
+#ifndef RT_B4L
+#define ARDUINO_RT
+#endif // RT_B4L
+
+#ifndef ARDUINO_RT
+#include "pins.h"
+#include "io.h"
+#endif // ARDUINO_RT
+
+#ifdef ARDUINO_RT
+const uint8_t MOTORCTRL_DRIVE_DIR_PIN = 22;
+const uint8_t MOTORCTRL_DRIVE_STEP_PIN = 12; // pwm_step outputB
+const uint8_t MOTORCTRL_DRIVE_ENBL_PIN = 24;
+
+const uint8_t MOTORCTRL_STEP_CNT_PIN = 47; // CNT5 input
+const uint8_t MOTORCTRL_STEP_CNT_OUT_DBG_PIN = 25;
+const uint8_t MOTORCTRL_STEP_CNT_OUT_DBG_PIN2 = 27;
+#endif // ARDUINO_RT
 
 const unsigned int TIM1_FREQ_DIV_FACTOR = 31250;
 
 // We use signed number for position to account for potential extra steps while being at homing position
 static volatile long motor_position = 0;
 static volatile long motor_target_position = 0;
-static volatile byte motor_direction = 0;
-static volatile byte motor_inmotion = 0;
+static volatile uint8_t motor_direction = 0;
+static volatile uint8_t motor_inmotion = 0;
 static volatile int  motor_step_cnt_incr = 0; 
 
-void setup_pwm1()
+static void setup_pwm_step();
+static void disable_cnt5_irq();
+static void enable_cnt5_irq();
+static void setup_ext_cnt5();
+static void irq_step_count_clbk();
+static void set_freq_pwm_step(const unsigned int freq);
+static void stop_pwm_step();
+static void set_threshold_cnt5(const unsigned int thresh);
+static void reset_cnt5();
+static unsigned int get_cnt5();
+
+static void setup_pwm_step()
 {
   cli();//stop interrupts
   TCCR1A = 0;
@@ -61,7 +88,7 @@ void setup_pwm1()
   // setting OCR1B = OCR1A guarantees 0 output
   // setting a low period minimizes turn-on latency.
   OCR1A = 3;
-  OCR1B = UINT_MAX;
+  OCR1B = COUNTER1_MAX;
   // WGM mode 9 (PWM, Phase and Frequency Correct - OCRn)
   // pre-scaler: div-256
   // OCR1A fixes the period
@@ -75,28 +102,35 @@ void setup_pwm1()
   // Disable interrupts
   TIMSK1 = 0;
 
+#ifdef ARDUINO_RT
   pinMode(MOTORCTRL_DRIVE_STEP_PIN, OUTPUT);
+#else
+  dio_init(DIO_PIN_MOTOR_STEP, DIO_OUTPUT);
+#endif // ARDUINO_RT
 
   sei();//allow interrupts
 }
 
-
-void disable_cnt5_irq()
+static void disable_cnt5_irq()
 {
   TIMSK5 &= ~ _BV(OCIE5A);
 }
 
-void enable_cnt5_irq()
+static void enable_cnt5_irq()
 {
   TIMSK5 |= _BV(OCIE5A);
 }
 
-void setup_ext_cnt5()
+static void setup_ext_cnt5()
 {
   cli();//stop interrupts
 
   // Counter for PWM output
+#ifdef ARDUINO_RT
   pinMode(MOTORCTRL_STEP_CNT_PIN, INPUT);
+#else
+  dio_init(DIO_PIN_STEP_COUNTER_TN, DIO_INPUT);
+#endif // ARDUINO_RT
   // WGM mode 4 (CTC - OCRn)
   // External rising-edge clock
   // ? add ICNC5 ?
@@ -108,29 +142,41 @@ void setup_ext_cnt5()
   sei();//allow interrupts
 }
 
-
+#ifdef ARDUINO_RT
 void setup()
+#else
+void setup_motor()
+#endif // ARDUINO_RT
 {
 
-  setup_pwm1();
+  setup_pwm_step();
   setup_ext_cnt5();
 
+#ifdef ARDUINO_RT
   pinMode(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, OUTPUT);
   digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, 0);
   pinMode(MOTORCTRL_STEP_CNT_OUT_DBG_PIN2, OUTPUT);
   digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN2, 0);
+#endif // ARDUINO_RT
   
+#ifdef ARDUINO_RT
   // TMC Dir pin
   pinMode(MOTORCTRL_DRIVE_DIR_PIN, OUTPUT);
   // TMC enable pin
   pinMode(MOTORCTRL_DRIVE_ENBL_PIN, OUTPUT);
+#else
+  // TMC Dir pin
+  dio_init(DIO_PIN_MOTOR_DIRECTION, DIO_OUTPUT);
+  // TMC enable pin
+  dio_init(DIO_PIN_MOTOR_ENABLE, DIO_OUTPUT);
+#endif // ARDUINO_RT
 
+#ifdef ARDUINO_RT
   Serial.begin(9600);
   while (! Serial); // Wait untilSerial is ready
   Serial.println("Test Monitor startup...");
+#endif // ARDUINO_RT
 }
-
-
 
 // Interrupt callback for Timer5 (step counter)
 ISR(MOTORCTRL_STEP_CNT_IRQ)
@@ -138,7 +184,7 @@ ISR(MOTORCTRL_STEP_CNT_IRQ)
   irq_step_count_clbk();
 }
 
-void irq_step_count_clbk()
+static void irq_step_count_clbk()
 {
   long remaining_distance;
 
@@ -151,18 +197,18 @@ void irq_step_count_clbk()
 
     if (motor_position >= motor_target_position)
     {
-      stop_pwm1();
+      stop_pwm_step();
     }
     else
     {
       remaining_distance = motor_target_position - motor_position;
-      if (remaining_distance <= UINT_MAX)
+      if (remaining_distance <= COUNTER1_MAX)
       {
         set_threshold_cnt5(remaining_distance);
       }
       else
       {
-        set_threshold_cnt5(UINT_MAX);
+        set_threshold_cnt5(COUNTER1_MAX);
       }
     }
   }
@@ -172,25 +218,25 @@ void irq_step_count_clbk()
     motor_position -= motor_step_cnt_incr;
     if (motor_position <= motor_target_position)
     {
-      stop_pwm1();
+      stop_pwm_step();
     }
     else
     {
       remaining_distance = motor_position - motor_target_position;
-      if (remaining_distance <= UINT_MAX)
+      if (remaining_distance <= COUNTER1_MAX)
       {
         set_threshold_cnt5(remaining_distance);
       }
       else
       {
-        set_threshold_cnt5(UINT_MAX);
+        set_threshold_cnt5(COUNTER1_MAX);
       }
     }
   }
 }
 
 // Maximum input freq is TIM1_FREQ_DIV_FACTOR/2
-void set_freq_pwm1(const unsigned int freq)
+static void set_freq_pwm_step(const unsigned int freq)
 {
   unsigned int timer1_period;
   timer1_period = TIM1_FREQ_DIV_FACTOR / freq;
@@ -210,13 +256,13 @@ void set_freq_pwm1(const unsigned int freq)
 }
 
 // Maximum input freq is TIM1_FREQ_DIV_FACTOR/2
-void stop_pwm1()
+static void stop_pwm_step()
 {
   cli();//stop interrupts
   // 3 is the minimum period for the timer
   // setting OCR1B = OCR1A guarantees 0 output
   // setting a low period minimizes turn-on latency.
-  // We first set OCR1B to UINT_MAX to guarantee absence of glitches.
+  // We first set OCR1B to COUNTER1_MAX to guarantee absence of glitches.
 
   // Stop counter
   TCCR1B &= ~MOTORCTRL_PWM_RUN_VALUE;
@@ -241,22 +287,40 @@ ISR(MOTORCTRL_PWM_OVF_IRQ)
   motor_inmotion = 0;
 }
 
-// Maximum input threshold is UINT_MAX
-void set_threshold_cnt5(const unsigned int thresh)
+// Maximum input threshold is COUNTER1_MAX
+static void set_threshold_cnt5(const unsigned int thresh)
 {
   motor_step_cnt_incr = thresh;
   // Counter interrupt is off by one, so need to adapt threshold value
   OCR5A = thresh-1;
 }
 
-void reset_cnt5()
+static void reset_cnt5()
 {
   TCNT5 = 0;
 }
 
-unsigned int get_cnt5()
+static unsigned int get_cnt5()
 {
   return TCNT5;
+}
+
+uint8_t motor_moving() {
+    return motor_inmotion;
+}
+
+int32_t motor_remaining_distance() {
+  cli();//stop interrupts
+  int32_t curr_pos = motor_position;
+  int32_t curr_pos_offset = get_cnt5();
+  uint8_t cur_direction = motor_direction;
+  sei();//allow interrupts
+  if (cur_direction == MOTORCTRL_DIR_FORWARD) {
+      curr_pos += curr_pos_offset;
+  } else {
+      curr_pos -= curr_pos_offset;
+  }
+  return curr_pos;
 }
 
 void set_motor_goto_position(const unsigned long position, const unsigned int speed)
@@ -289,32 +353,46 @@ void set_motor_goto_position(const unsigned long position, const unsigned int sp
       }
     }
 
+#ifdef ARDUINO_RT
     digitalWrite(MOTORCTRL_DRIVE_DIR_PIN, motor_direction);
+#else
+    dio_write(DIO_PIN_MOTOR_DIRECTION, motor_direction);
+#endif // ARDUINO_RT
+
 
     if (remaining_distance > 0)
     {
-      if (remaining_distance <= UINT_MAX)
+      if (remaining_distance <= COUNTER1_MAX)
       {
         set_threshold_cnt5(remaining_distance);
       }
       else
       {
-        set_threshold_cnt5(UINT_MAX);
+        set_threshold_cnt5(COUNTER1_MAX);
       }
 
+#ifdef ARDUINO_RT
       digitalWrite(MOTORCTRL_DRIVE_ENBL_PIN, MOTORCTRL_DRIVE_ENBL_TRUE);
+#else
+    dio_write(DIO_PIN_MOTOR_ENABLE, MOTORCTRL_DRIVE_ENBL_TRUE);
+#endif // ARDUINO_RT
       motor_inmotion = 1;
-      set_freq_pwm1(speed);
-      // Verify delay between set_freq_pwm1() and real start of PWM.
+      set_freq_pwm_step(speed);
+      // Verify delay between set_freq_pwm_step() and real start of PWM.
       //digitalWrite(MOTORCTRL_STEP_CNT_OUT_DBG_PIN, 1);
     }
     else
     {
+#ifdef ARDUINO_RT
       digitalWrite(MOTORCTRL_DRIVE_ENBL_PIN, MOTORCTRL_DRIVE_ENBL_FALSE);
+#else
+    dio_write(DIO_PIN_MOTOR_ENABLE, MOTORCTRL_DRIVE_ENBL_FALSE);
+#endif // ARDUINO_RT
     }
   }
 }
 
+#ifdef ARDUINO_RT
 void loop()
 {
 
@@ -337,3 +415,4 @@ void loop()
     }
   }
 }
+#endif // ARDUINO_RT
