@@ -63,13 +63,16 @@ static volatile long motor_position_abs = 0;
 static volatile long motor_position_rel = 0;
 static volatile long motor_target_position_abs = 0;
 static volatile long motor_target_position_rel = 0;
-static volatile uint16_t motor_target_pwm_period = 0;
-static volatile uint16_t motor_increment_pwm_period = 0;
-static volatile uint16_t motor_current_pwm_period = 0;
+static volatile uint16_t motor_target_pwm_freq = 0;
+static volatile uint16_t motor_increment_pwm_freq = 0;
+static volatile uint16_t motor_current_pwm_freq = 0;
 static volatile uint8_t motor_direction = 0;
 static volatile uint8_t motor_inmotion = 0;
 static volatile uint8_t motor_accel_enbl = 0;
-static volatile int  motor_step_cnt_incr = 0;
+static volatile uint16_t motor_step_cnt_incr_curr = 0;
+static volatile uint16_t motor_step_cnt_accel_incr_base = 0;
+static volatile uint16_t motor_step_cnt_accel_incr_sum = 0;
+static volatile uint16_t motor_step_cnt_accel_incr_last = 0;
 
 static void setup_pwm_step();
 static void disable_cnt5_irq();
@@ -174,11 +177,13 @@ void setup_motor()
   pinMode(MOTORCTRL_DRIVE_DIR_PIN, OUTPUT);
   // TMC enable pin
   pinMode(MOTORCTRL_DRIVE_ENBL_PIN, OUTPUT);
+  digitalWrite(MOTORCTRL_DRIVE_ENBL_PIN, MOTORCTRL_DRIVE_ENBL_FALSE);
 #else
   // TMC Dir pin
   dio_init(DIO_PIN_MOTOR_DIRECTION, DIO_OUTPUT);
   // TMC enable pin
   dio_init(DIO_PIN_MOTOR_ENABLE, DIO_OUTPUT);
+  dio_write(DIO_PIN_MOTOR_ENABLE, MOTORCTRL_DRIVE_ENBL_FALSE);
 #endif // ARDUINO_RT
 
 #ifdef ARDUINO_RT
@@ -197,14 +202,17 @@ ISR(MOTORCTRL_STEP_CNT_IRQ)
 static void irq_step_count_clbk()
 {
   long remaining_distance;
+  uint32_t target_position_rel = motor_target_position_rel;
   long position_rel = motor_position_rel;
+  uint16_t new_pwm_freq;
+  uint32_t new_step_cnt_value;
 
-  position_rel = position_rel + get_cnt5() + motor_step_cnt_incr;
-  remaining_distance = motor_target_position_rel - position_rel;
+  position_rel = position_rel + get_cnt5() + motor_step_cnt_incr_curr;
+  remaining_distance = target_position_rel - position_rel;
   motor_position_rel = position_rel;
 
   // CASE: movement finished
-  if (position_rel >= motor_target_position_rel)
+  if (position_rel >= target_position_rel)
   {
     stop_pwm_step();
     // Update absolute position with final relative one
@@ -220,24 +228,62 @@ static void irq_step_count_clbk()
   // CASE: no acceleraion / deceleration required
   else if(motor_accel_enbl == 0)
   {
-    if (remaining_distance <= COUNTER_STEP_MAX)
+    new_step_cnt_value = min(remaining_distance, COUNTER_STEP_MAX);
+    set_threshold_cnt5((uint16_t) new_step_cnt_value);
+  }
+  // CASE: check if need to accelerate / deceleration
+  else
+  {
+    // Acceleration
+    if ((position_rel < target_position_rel/2) && (motor_current_pwm_freq < motor_target_pwm_freq))
     {
-      set_threshold_cnt5(remaining_distance);
+      // PWM
+      new_pwm_freq = motor_current_pwm_freq + motor_increment_pwm_freq;
+      new_pwm_freq = min(new_pwm_freq, motor_target_pwm_freq);
+      set_freq_pwm_step(new_pwm_freq);
+      motor_current_pwm_freq = new_pwm_freq;
+
+      // Step counter
+      motor_step_cnt_accel_incr_sum = position_rel;
+      new_step_cnt_value = motor_step_cnt_accel_incr_last + motor_step_cnt_accel_incr_base;
+
+      // Do we pass through decelerating point?
+      if ((remaining_distance - new_step_cnt_value) < target_position_rel/2)
+      {
+        // Then go to decelerating point
+        new_step_cnt_value = remaining_distance - target_position_rel/2;
+      }
+      motor_step_cnt_accel_incr_last = new_step_cnt_value;
     }
+    // Deceleration
+    else if ((position_rel >= target_position_rel/2) && (remaining_distance <= motor_step_cnt_accel_incr_sum))
+    {
+      // PWM
+      new_pwm_freq = motor_current_pwm_freq - motor_increment_pwm_freq;
+      // Avoid potential rounding issues. Never reaches zero!
+      new_pwm_freq = max(new_pwm_freq, motor_increment_pwm_freq);
+      set_freq_pwm_step(new_pwm_freq);
+      motor_current_pwm_freq = new_pwm_freq;
+
+      // Step counter
+      new_step_cnt_value = motor_step_cnt_accel_incr_last - motor_step_cnt_accel_incr_base;
+      //motor_step_cnt_accel_incr_sum = new_step_cnt_value;
+      // Do not go too far
+      new_step_cnt_value = min(new_step_cnt_value, remaining_distance);
+      motor_step_cnt_accel_incr_last = new_step_cnt_value;
+    }
+    // Cruise speed
     else
     {
-      set_threshold_cnt5(COUNTER_STEP_MAX);
+      // Distance to go to decelerating point
+      // motor_step_cnt_accel_incr_sum represents number of steps for accelerating ramp
+      new_step_cnt_value = remaining_distance - motor_step_cnt_accel_incr_sum;
+      new_step_cnt_value = min(new_step_cnt_value, COUNTER_STEP_MAX);
     }
+
+    // Go to next position
+    set_threshold_cnt5((uint16_t) new_step_cnt_value);
   }
-  // else (accel)
-
-
-    // motor_target_pwm_period = 0;
-    // motor_increment_pwm_period = 0;
-    // motor_current_pwm_period = 0;
-
-
-
 }
 
 // Minimum input period is 2
@@ -299,6 +345,12 @@ ISR(MOTORCTRL_PWM_OVF_IRQ)
 {
   // Disable overflow interrupt
   TIMSK3 &= ~ MOTORCTRL_PWM_OVF_IRQ_CFG;
+  // Disable drive
+#ifdef ARDUINO_RT
+  digitalWrite(MOTORCTRL_DRIVE_ENBL_PIN, MOTORCTRL_DRIVE_ENBL_FALSE);
+#else
+  dio_write(DIO_PIN_MOTOR_ENABLE, MOTORCTRL_DRIVE_ENBL_FALSE);
+#endif // ARDUINO_RT
   // Report that motor is not in motion anymore
   motor_inmotion = 0;
 }
@@ -306,7 +358,7 @@ ISR(MOTORCTRL_PWM_OVF_IRQ)
 // Maximum input threshold is COUNTER_STEP_MAX
 static void set_threshold_cnt5(const unsigned int thresh)
 {
-  motor_step_cnt_incr = thresh;
+  motor_step_cnt_incr_curr = thresh;
   // Counter interrupt is off by one, so need to adapt threshold value
   OCR5A = thresh-1;
 }
@@ -326,10 +378,6 @@ uint8_t motor_moving() {
 }
 
 int32_t motor_remaining_distance() {
-
-
-//FIXME !!!
-  
   cli();//stop interrupts
   int32_t curr_pos = motor_position_abs;
   int32_t curr_pos_offset = get_cnt5();
@@ -356,8 +404,6 @@ void set_motor_goto_position_accel_exec(uint32_t target_position_abs, const uint
   long target_position_rel;
   uint16_t selected_speed;
   uint8_t accel_enbl;
-  uint16_t pwm_period_curr;
-  uint16_t pwm_period_target;
 
   if (motor_inmotion == 0)
   {
@@ -428,6 +474,9 @@ void set_motor_goto_position_accel_exec(uint32_t target_position_abs, const uint
         accel_enbl = 1;
         set_threshold_cnt5(step_num_base);
         selected_speed = step_freq_base;
+        motor_step_cnt_accel_incr_base = step_num_base;
+        motor_step_cnt_accel_incr_last = step_num_base;
+        motor_step_cnt_accel_incr_sum = 0;
       }
 
 #ifdef ARDUINO_RT
@@ -437,22 +486,19 @@ void set_motor_goto_position_accel_exec(uint32_t target_position_abs, const uint
 #endif // ARDUINO_RT
       motor_inmotion = 1;
 
-      // Take PWM period
-      pwm_period_curr = convert_freq2period_pwm_step(selected_speed);
-      motor_current_pwm_period = pwm_period_curr;
+      // Take PWM freq
+      motor_current_pwm_freq = selected_speed;
       if (accel_enbl == 0)
       {
-        motor_increment_pwm_period = 0;
-        motor_target_pwm_period = pwm_period_curr; // equal current
+        motor_increment_pwm_freq = 0;
+        motor_target_pwm_freq = selected_speed;
       }
       else
       {
-        motor_increment_pwm_period = pwm_period_curr;
-        pwm_period_target = convert_freq2period_pwm_step(target_speed);
-        motor_target_pwm_period = pwm_period_target;
+        motor_increment_pwm_freq = selected_speed;
+        motor_target_pwm_freq = target_speed;
       }
-
-      set_period_pwm_step(pwm_period_curr);
+      set_freq_pwm_step(selected_speed);
       motor_accel_enbl = accel_enbl;
     }
     else
@@ -470,24 +516,54 @@ void set_motor_goto_position_accel_exec(uint32_t target_position_abs, const uint
 #ifdef ARDUINO_RT
 void loop()
 {
+  uint16_t test_motor_speed_step;
+  uint16_t test_step_num_base;
+  uint16_t test_motor_speed; // Max MOTORCTRL_PWM_FREQ_DIV_FACTOR/2
+  uint32_t test_motor_target_pos;
+  uint32_t test_motor_target_pos_limit;
 
-  unsigned int motor_speed = 500; // Max MOTORCTRL_PWM_FREQ_DIV_FACTOR/2
-  unsigned long motor_target_pos = 10;
-  unsigned long motor_target_pos_limit = 20;
+/*
+  // Simple test case for constant speed movement
+  test_motor_speed = 5000; // Max MOTORCTRL_PWM_FREQ_DIV_FACTOR/2
+  test_motor_target_pos = 100000;
+  test_motor_target_pos_limit = 2000;
 
-  while(1) {
+  //while(1) {
 
-    set_motor_goto_position(motor_target_pos, motor_speed);
-    motor_target_pos +=4;
-    if (motor_target_pos > motor_target_pos_limit)
+    set_motor_goto_position(test_motor_target_pos, test_motor_speed);
+    test_motor_target_pos +=40;
+    if (test_motor_target_pos > test_motor_target_pos_limit)
     {
-      motor_target_pos = 0;
+      test_motor_target_pos = 0;
     }
 
     while (motor_inmotion)
     {
-        delay(100);
+        delay(1000);
     }
+  //}
+*/
+
+
+  // Simple test case for accel / decel movement
+  test_motor_speed_step = 200;
+  test_step_num_base = 2;
+  test_motor_speed = 10000; // Max MOTORCTRL_PWM_FREQ_DIV_FACTOR/2
+  test_motor_target_pos = 40000;
+  test_motor_target_pos_limit = 20;
+
+  set_motor_goto_position_accel_exec(test_motor_target_pos, test_motor_speed, test_step_num_base, test_motor_speed_step);
+
+  while (motor_inmotion)
+  {
+      delay(100);
   }
+
+  test_motor_target_pos *= 2;
+
+  //set_motor_goto_position_accel_exec(test_motor_target_pos, test_motor_speed, test_step_num_base, test_motor_speed_step);
+
+  while(1) {}
+
 }
 #endif // ARDUINO_RT
