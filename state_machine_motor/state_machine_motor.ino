@@ -39,7 +39,7 @@ const uint32_t plateau_pulses = tot_pulses/20;
 const uint32_t insp_pulses = tot_pulses - plateau_pulses;
 const uint32_t exp_pulses = tot_pulses;
 
-const uint32_t pulses_home_final = m_steps * 50;   // amount of step to properly set the initial low point
+const uint32_t pulses_home_final = m_steps * 60;   // amount of step to properly set the initial low point
 const uint32_t pulses_full_range = 1200 * m_steps;   // total µsteps/pulses needed
 
 // Pulse periods
