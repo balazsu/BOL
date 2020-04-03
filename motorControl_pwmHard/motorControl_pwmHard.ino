@@ -247,13 +247,15 @@ static void irq_step_count_clbk()
       motor_step_cnt_accel_incr_sum = position_rel;
       new_step_cnt_value = motor_step_cnt_accel_incr_last + motor_step_cnt_accel_incr_base;
 
+      // motor_step_cnt_accel_incr_last must not be corrected if we pass through decelerating point
+      motor_step_cnt_accel_incr_last = new_step_cnt_value;
+
       // Do we pass through decelerating point?
       if ((remaining_distance - new_step_cnt_value) < target_position_rel/2)
       {
         // Then go to decelerating point
         new_step_cnt_value = remaining_distance - target_position_rel/2;
       }
-      motor_step_cnt_accel_incr_last = new_step_cnt_value;
     }
     // Deceleration
     else if ((position_rel >= target_position_rel/2) && (remaining_distance <= motor_step_cnt_accel_incr_sum))
@@ -448,7 +450,7 @@ void set_motor_goto_position_accel_exec(uint32_t target_position_abs, const uint
       //
       // Assume 2*step_num_base is always < COUNTER_STEP_MAX
       // 2* since there is acceleration and deceleration
-      if (target_position_rel <= 2*step_num_base)
+      if (target_position_rel < 2*step_num_base)
       {
         accel_enbl = 0;
         set_threshold_cnt5(target_position_rel);
@@ -546,24 +548,32 @@ void loop()
 
 
   // Simple test case for accel / decel movement
-  test_motor_speed_step = 200;
-  test_step_num_base = 2;
+  test_motor_speed_step = 200; // 200
+  test_step_num_base = 2; // min 2
   test_motor_speed = 10000; // Max MOTORCTRL_PWM_FREQ_DIV_FACTOR/2
-  test_motor_target_pos = 40000;
+  test_motor_target_pos = 20000;
   test_motor_target_pos_limit = 20;
 
-  set_motor_goto_position_accel_exec(test_motor_target_pos, test_motor_speed, test_step_num_base, test_motor_speed_step);
-
-  while (motor_inmotion)
+  for(int i=0; i<5; i++) 
   {
-      delay(100);
+    set_motor_goto_position_accel_exec(test_motor_target_pos, test_motor_speed, test_step_num_base, test_motor_speed_step);
+
+    while (motor_inmotion)
+    {
+        delay(100);
+    }
+
+    set_motor_goto_position_accel_exec(0, test_motor_speed, test_step_num_base, test_motor_speed_step);
+
+    while (motor_inmotion)
+    {
+        delay(100);
+    }
   }
-
-  test_motor_target_pos *= 2;
-
-  //set_motor_goto_position_accel_exec(test_motor_target_pos, test_motor_speed, test_step_num_base, test_motor_speed_step);
 
   while(1) {}
 
 }
 #endif // ARDUINO_RT
+
+// Tests Cases
