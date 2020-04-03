@@ -22,8 +22,8 @@
 
 
 // Breath parameters
-const unsigned long TCT = 5 * 1000000;    // Total cycle time [µs]
-const unsigned long Ti = 2.5 * 1000000;     // Inspiration time [µs]
+const unsigned long TCT = 2 * 1000000;    // Total cycle time [µs]
+const unsigned long Ti = 0.5 * 1000000;     // Inspiration time [µs]
 
 const unsigned long Te = TCT - Ti;          // Expiration time [µs]
 const uint32_t T_home = 2*TCT;
@@ -57,7 +57,7 @@ void set_breath_params(uint32_t amplitude) {
     plateau_pulses = amplitude/30;
     insp_pulses = amplitude - plateau_pulses;
     exp_pulses = amplitude;
-    uint32_t t_plateau = Ti/10;
+    uint32_t t_plateau = Ti*10/66;
     uint32_t t_insp = Ti - t_plateau;
     T_pulse_insp = t_insp/insp_pulses;
     T_pulse_plateau = t_plateau/plateau_pulses;
