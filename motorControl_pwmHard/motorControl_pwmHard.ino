@@ -22,6 +22,9 @@
 
 #include <avr/interrupt.h>
 
+#define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
+#define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
+
 #define MOTORCTRL_DIR_FORWARD 0
 #define MOTORCTRL_DIR_BACKWARD 1
 #define MOTORCTRL_DRIVE_ENBL_TRUE 0
@@ -49,6 +52,7 @@
 #ifdef ARDUINO_RT
 const uint8_t MOTORCTRL_DRIVE_DIR_PIN = 22;
 const uint8_t MOTORCTRL_DRIVE_STEP_PIN = 2; // pwm_step (OC3B)
+const uint8_t MOTORCTRL_DRIVE_STEP_PIN_BIS = 3; // pwm_step (OC3C)
 const uint8_t MOTORCTRL_DRIVE_ENBL_PIN = 24;
 
 const uint8_t MOTORCTRL_STEP_CNT_PIN = 47; // CNT5 input
@@ -99,13 +103,15 @@ static void setup_pwm_step()
   // 3 is the minimum period for the timer
   // setting OCR3B = OCR3A guarantees 0 output
   // setting a low period minimizes turn-on latency.
+  // always keep OCR3C and OCR3B in sync
   OCR3A = 3;
   OCR3B = COUNTER_STEP_MAX;
+  OCR3C = COUNTER_STEP_MAX;
   // WGM mode 9 (PWM, Phase and Frequency Correct - OCRn)
   // pre-scaler: div-256
   // OCR3A fixes the period
   // OCR3B fixes duty cycle
-  TCCR3A = _BV(COM3A0) | _BV(COM3B1) | _BV(COM3B0) | _BV(WGM30);
+  TCCR3A = _BV(COM3A0) | _BV(COM3B1) | _BV(COM3B0) | _BV(COM3C1) | _BV(COM3C0) | _BV(WGM30);
   TCCR3B |= _BV(WGM33);
 
   // Start
@@ -116,9 +122,11 @@ static void setup_pwm_step()
 
 #ifdef ARDUINO_RT
   pinMode(MOTORCTRL_DRIVE_STEP_PIN, OUTPUT);
+  pinMode(MOTORCTRL_DRIVE_STEP_PIN_BIS, OUTPUT);
   //pinMode(5, OUTPUT); // to debug PWM, always duty cycle 1/2
 #else
   dio_init(DIO_PIN_MOTOR_STEP, DIO_OUTPUT);
+  dio_init(DIO_PIN_MOTOR_STEP_BIS, DIO_OUTPUT);
 #endif // ARDUINO_RT
 
   sei();//allow interrupts
@@ -228,7 +236,7 @@ static void irq_step_count_clbk()
   // CASE: no acceleraion / deceleration required
   else if(motor_accel_enbl == 0)
   {
-    new_step_cnt_value = min(remaining_distance, COUNTER_STEP_MAX);
+    new_step_cnt_value = MIN(remaining_distance, COUNTER_STEP_MAX);
     set_threshold_cnt5((uint16_t) new_step_cnt_value);
   }
   // CASE: check if need to accelerate / deceleration
@@ -239,7 +247,7 @@ static void irq_step_count_clbk()
     {
       // PWM
       new_pwm_freq = motor_current_pwm_freq + motor_increment_pwm_freq;
-      new_pwm_freq = min(new_pwm_freq, motor_target_pwm_freq);
+      new_pwm_freq = MIN(new_pwm_freq, motor_target_pwm_freq);
       set_freq_pwm_step(new_pwm_freq);
       motor_current_pwm_freq = new_pwm_freq;
 
@@ -261,7 +269,7 @@ static void irq_step_count_clbk()
       // PWM
       new_pwm_freq = motor_current_pwm_freq - motor_increment_pwm_freq;
       // Avoid potential rounding issues. Never reaches zero!
-      new_pwm_freq = max(new_pwm_freq, motor_increment_pwm_freq);
+      new_pwm_freq = MAX(new_pwm_freq, motor_increment_pwm_freq);
       set_freq_pwm_step(new_pwm_freq);
       motor_current_pwm_freq = new_pwm_freq;
 
@@ -269,7 +277,7 @@ static void irq_step_count_clbk()
       new_step_cnt_value = motor_step_cnt_accel_incr_last - motor_step_cnt_accel_incr_base;
       //motor_step_cnt_accel_incr_sum = new_step_cnt_value;
       // Do not go too far
-      new_step_cnt_value = min(new_step_cnt_value, remaining_distance);
+      new_step_cnt_value = MIN(new_step_cnt_value, remaining_distance);
       motor_step_cnt_accel_incr_last = new_step_cnt_value;
     }
     // Cruise speed
@@ -278,7 +286,7 @@ static void irq_step_count_clbk()
       // Distance to go to decelerating point
       // motor_step_cnt_accel_incr_sum represents number of steps for accelerating ramp
       new_step_cnt_value = remaining_distance - motor_step_cnt_accel_incr_sum;
-      new_step_cnt_value = min(new_step_cnt_value, COUNTER_STEP_MAX);
+      new_step_cnt_value = MIN(new_step_cnt_value, COUNTER_STEP_MAX);
     }
 
     // Go to next position
@@ -299,6 +307,7 @@ static void set_period_pwm_step(const unsigned int period)
   // Update TOP values
   OCR3A = period;
   OCR3B = period/2;
+  OCR3C = period/2;
   // Start counter
   TCCR3B |= MOTORCTRL_PWM_RUN_VALUE;
   sei();//allow interrupts
@@ -308,7 +317,7 @@ static void set_period_pwm_step(const unsigned int period)
 static unsigned int convert_freq2period_pwm_step(const unsigned int freq)
 {
   unsigned int timer_period = MOTORCTRL_PWM_FREQ_DIV_FACTOR / freq;
-  return max(timer_period,2);
+  return MAX(timer_period,2);
 }
 
 // Maximum input freq is MOTORCTRL_PWM_FREQ_DIV_FACTOR/2
@@ -331,6 +340,7 @@ static void stop_pwm_step()
   TCCR3B &= ~MOTORCTRL_PWM_RUN_VALUE;
   // Update TOP values to minimum
   OCR3B = 3;
+  OCR3C = 3;
   OCR3A = 3;
   // Enable overflow interrupt (end of operations)
   TIFR3 |= _BV(TOV3); // Clear pending interrupt flag (if any)
@@ -452,7 +462,7 @@ void set_motor_goto_position_accel_exec(uint32_t target_position_abs, const uint
       {
         accel_enbl = 0;
         set_threshold_cnt5(target_position_rel);
-        selected_speed = min(MOTORCTRL_MAX_SPEED_SMALL_MVMT,target_speed);
+        selected_speed = MIN(MOTORCTRL_MAX_SPEED_SMALL_MVMT,target_speed);
       }
       // CASE: slow movement
       else if (target_speed == step_freq_base)
