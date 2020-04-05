@@ -1,8 +1,8 @@
-#define PIN_EN 24
-#define PIN_DIR 22
+#define PIN_EN 22
+#define PIN_DIR 24
 #define PIN_STEP 2
 #define PIN_START 26
-#define PIN_PAUSE 19
+#define PIN_PAUSE 28
 #define PIN_ECS_UP 8
 #define PIN_ECS_DOWN 9
 #define PIN_ERR 10 
